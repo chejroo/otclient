@@ -4,9 +4,16 @@ Module
   author: OTClient Team
   website: https://github.com/mehah/otclient
   sandboxed: true
-  load-later:
-    - client_profiles
-    - game_buttons
-    - game_itemselector
-    - client_textedit
-    - game_bot
+
+  # Deliberately empty. Upstream shipped vBot 4.8 here (mods/game_bot) together
+  # with its helpers client_profiles, game_buttons, game_itemselector and
+  # client_textedit, and loaded all five from this list. That is a complete
+  # automation suite: target selection, auto heal, auto attack, waypoint walking,
+  # looting, and an eval surface of its own in executor.lua.
+  #
+  # Exp Arena scores runs and compares players, so brief section 1 puts Fair
+  # first. A shipped bot is not compatible with that at any setting, which is why
+  # the folders are deleted rather than disabled.
+  #
+  # This module itself has to stay: init.lua calls ensureModuleLoaded on it, and
+  # that is fatal when the module is missing.

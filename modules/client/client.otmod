@@ -17,6 +17,8 @@ Module
     - client_background
     - client_options
     - client_entergame
-    - client_terminal
+    # client_terminal removed: it was a loadstring console on Ctrl+T whose
+    # environment falls through to _G, so g_game.attack, g_game.talk and
+    # cycleEvent were all one line away. That is a bot with a nicer name.
     - client_debug_info
     - client_serverlist

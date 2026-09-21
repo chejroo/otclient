@@ -153,9 +153,14 @@ UIWidget
 
       OptionScaleScroll
         id: hotkeyDelay
-        !text: tr('Hotkey delay: 30ms')
+        !text: tr('Hotkey delay: 50ms')
         anchors.fill: parent
-        &minimumScrollValue: 30
+        # Floor raised from 30ms. At 30ms a held hotkey fires 33 actions per
+        # second, and Canary disconnects a connection over maxPacketsPerSecond,
+        # which defaults to 25 and is shared with walking and attacking. So the
+        # old minimum let a player configure a setting that gets them kicked.
+        # 50ms is 20 per second, which leaves headroom under that budget.
+        &minimumScrollValue: 50
         &maximumScrollValue: 250
         &scrollSize: 21
         @onSetup: |

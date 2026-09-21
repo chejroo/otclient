@@ -5,6 +5,24 @@ Module
   website: https://github.com/edubart/otclient
   sandboxed: true
   scripts: [ widgets/uigamemap, widgets/uiitem, widgets/statsbar, gameinterface ]
+  # Trimmed for Exp Arena. Brief section 3 has no open world hunting, no loot
+  # economy and no trading, so the systems that serve those were dropped from
+  # this list: prey, imbuing and its tracker, quest log, VIP list, player trade,
+  # bug report, player mount, rule violation, market, unjustified points,
+  # paperdolls, stash, highscores, reward wall, forge, tutorial and task board.
+  #
+  # Names are removed rather than folders deleted. A module that is not in this
+  # list is never loaded, `modules.game_X` stays nil, and putting the line back
+  # is the entire revert. Several of these also send requests to the server on
+  # game start (prey, forge), which a Canary build that does not implement them
+  # would have to answer.
+  #
+  # One exception, and it is the trap in this approach: `autoload: true` beats
+  # this list. autoLoadModules picks such a module up whatever is written here,
+  # so dropping the name achieves nothing. Of the eighteen above, task board is
+  # the only one, and it carries `enabled: false` in its own manifest instead,
+  # as game_lootsplitter does. Check that flag before assuming a removed name
+  # means a module that is gone.
   load-later:
     - game_walk
     - game_joystick
@@ -13,49 +31,31 @@ Module
     - game_healthinfo
     - game_inventory
     - game_mainpanel
-    - game_prey
-    - game_imbuing
-    - game_imbuementtracker
     - game_hotkeys
-    - game_questlog
     - game_textmessage
     - game_console
     - game_actionbar
     - game_outfit
     - game_skills
     - game_containers
-    - game_viplist
     - game_battle
     - game_npctrade
     - game_textwindow
-    - game_playertrade
-    - game_bugreport
     - game_playerdeath
-    - game_playermount
-    - game_ruleviolation
-    - game_market
     - game_spelllist
     - game_cooldown
     - game_modaldialog
-    - game_unjustifiedpoints
     - game_shaders
     - game_attachedeffects
-    - game_paperdolls
-    - game_stash
     - game_healthcircle
     - game_shop
     - game_notifications
-    - game_highscore
     - game_blessing
     - game_store
     - game_quickloot
     - game_cyclopedia
     - game_creatureinformation
-    - game_rewardwall
-    - game_forge
-    - game_tutorial
     - game_inspect
-    - game_taskboard
     - game_wheel
     - game_proficiency
 

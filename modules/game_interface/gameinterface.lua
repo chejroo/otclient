@@ -23,7 +23,16 @@ bottomSplitter = nil
 -- by consumers (e.g. game_bot) to pause automation while the player walks;
 -- defined here so it is always present whenever this module is loaded
 lastManualWalk = 0
-limitedZoom = false
+-- Was false, and limitZoom() is never called by anything, so the client took
+-- the setMaxZoomOut(513) plus setLimitVisibleRange(false) branch below: the
+-- rendered viewport was allowed to exceed the range the server makes the player
+-- aware of. No desktop UI binds a zoom control, so it was not reachable by hand,
+-- but one line in the Lua terminal was enough, and the terminal shipped enabled.
+-- The terminal is gone now; this closes the same door from the other side.
+--
+-- The branch already exempts g_game.isGM(), so a gamemaster still gets the wide
+-- view for testing and recording.
+limitedZoom = true
 currentViewMode = 0
 leftIncreaseSidePanels = nil
 leftDecreaseSidePanels = nil
@@ -739,7 +748,7 @@ function createThingMenu(menuPosition, lookThing, useThing, creatureThing)
                 g_game.requestOutfit()
             end)
 
-            if g_game.getFeature(GamePrey) then
+            if g_game.getFeature(GamePrey) and modules.game_prey then
                 menu:addOption(tr('Prey Dialog'), function()
                     modules.game_prey.show()
                 end)
@@ -877,7 +886,7 @@ function createThingMenu(menuPosition, lookThing, useThing, creatureThing)
             end
         end
 
-        if modules.game_ruleviolation.hasWindowAccess() and creatureThing:isPlayer() then
+        if modules.game_ruleviolation and modules.game_ruleviolation.hasWindowAccess() and creatureThing:isPlayer() then
             menu:addSeparator()
             menu:addOption(tr('Rule Violation'), function()
                 modules.game_ruleviolation.show(creatureThing:getName())

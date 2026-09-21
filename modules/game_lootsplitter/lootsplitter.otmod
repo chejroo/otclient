@@ -4,6 +4,10 @@ Module
   author: OTClient team
   website: https://github.com/mehah/otclient
   sandboxed: true
+  # Disabled for Exp Arena: it parses loot chat to split party loot value, and
+  # brief section 3 has no loot economy to split. It is autoload, so it cannot be
+  # dropped from a load-later list the way the other unused systems were.
+  enabled: false
   autoload: true
   scripts: [ lootsplitter ]
   @onLoad: init()

@@ -3,6 +3,11 @@ Module
   description: game_taskboard
   author: game_taskboard
   sandboxed: true
+  # Disabled for Exp Arena: a task board is open world progression and brief
+  # section 3 has none. Dropping the name from game_interface's load-later list
+  # was not enough, because this module is autoload and autoLoadModules picks it
+  # up regardless of any list. Same shape as game_lootsplitter.
+  enabled: false
   autoload: true
   minClientVersion: 1511
   scripts: [tasks, const/const_tab_bounty, const/const_tab_weekly, const/const_tab_shop, const/const_modal_preferred, controller/tab_bounty, controller/modal_preferred, controller/tab_weekly, controller/tab_shop, controller/modal_soulseal, trackers/miniwindows_tracker]
