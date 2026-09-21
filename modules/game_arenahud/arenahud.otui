@@ -2,8 +2,8 @@ PhantomMiniWindow
   id: arenaHudPanel
   draggable: true
   phantom: false
-  &panelHeight: 324
-  height: 324
+  &panelHeight: 382
+  height: 382
 
   HorizontalSeparator
     id: sep0
@@ -28,10 +28,24 @@ PhantomMiniWindow
     font: verdana-11px-rounded
 
   Label
+    id: banner
+    !text: ''
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: state.bottom
+    margin-left: 8
+    margin-right: 8
+    margin-top: 4
+    height: 16
+    text-align: center
+    color: #e0a33cff
+    font: verdana-11px-rounded
+
+  Label
     id: clock
     !text: '0:00'
     anchors.left: parent.left
-    anchors.top: state.bottom
+    anchors.top: banner.bottom
     margin-left: 8
     margin-top: 5
     width: 60
@@ -43,7 +57,7 @@ PhantomMiniWindow
     id: phase
     !text: '-'
     anchors.right: parent.right
-    anchors.top: state.bottom
+    anchors.top: banner.bottom
     margin-right: 8
     margin-top: 5
     width: 90
@@ -92,12 +106,49 @@ PhantomMiniWindow
     text-align: right
     color: #e0e0e0ff
 
+  # Drains over ArenaConfig.hunt.comboWindow after every kill. Hidden rather
+  # than emptied when no chain is live, because UIProgressBar:updateBackground
+  # floors the fill at one pixel, so a bar at 0% still shows a sliver and reads
+  # as "a tiny bit of time left" when the honest answer is none.
+  ProgressBar
+    id: comboBar
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: combo.bottom
+    margin-left: 8
+    margin-right: 8
+    margin-top: 2
+    height: 8
+    visible: false
+    background-color: #5ac85aff
+
+  Label
+    id: oppCaption
+    !text: 'Rival'
+    anchors.left: parent.left
+    anchors.top: comboBar.bottom
+    margin-left: 8
+    margin-top: 2
+    width: 44
+    color: #9e9e9eff
+
+  Label
+    id: opp
+    !text: '-'
+    anchors.left: oppCaption.right
+    anchors.right: parent.right
+    anchors.top: comboBar.bottom
+    margin-right: 8
+    margin-top: 2
+    text-align: right
+    color: #e0e0e0ff
+
   Label
     id: link
     !text: 'no run'
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.top: combo.bottom
+    anchors.top: opp.bottom
     margin-left: 8
     margin-right: 8
     margin-top: 3

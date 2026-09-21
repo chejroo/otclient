@@ -1,0 +1,10 @@
+Module
+  name: game_arenakeys
+  description: Exp Arena key bindings, Space to attack plus the run kit the server sends on opcode 176
+  author: Exp Arena
+  sandboxed: true
+  autoload: true
+  autoload-priority: 1110
+  scripts: [ arenakeys ]
+  @onLoad: init()
+  @onUnload: terminate()

@@ -1,10 +1,25 @@
--- Opcodes 170, 171 and 172 are claimed in docs/opcodes.md. Changing one here
--- without changing that file and the server side is how a payload silently
--- turns into garbage at runtime.
+-- Opcodes 170 to 175 are claimed in docs/opcodes.md. Changing one here without
+-- changing that file and the server side is how a payload silently turns into
+-- garbage at runtime.
 local OPCODE_TICK = 170
 local OPCODE_CONTROL = 171
 local OPCODE_STATE = 172
-local WIRE_VERSION = 'v2'
+-- The announcer: countdown, match start, phase change, ticker going dark,
+-- result. One shot messages only, so nothing here is on a timer.
+local OPCODE_MATCH = 173
+-- Telegraph overlay: the tiles about to be hit, and a clear when they resolve.
+local OPCODE_TELEGRAPH = 174
+-- One scoring kill: where, what it was worth, and where the chain stands.
+local OPCODE_KILL = 175
+-- v5 added the cast's source to opcode 174, so a telegraph can be drawn in the
+-- colour of whoever cast it, and claimed opcode 176 for the arena key manifest.
+-- v4 added the opponent's score and combo to the tick. It is not the v3 that
+-- docs/opcodes.md originally claimed for the race: v3 was already spent on the
+-- privileged flag, and the tick pattern below ends in (.*) for the phase name,
+-- so two extra fields under v3 would have printed 'Frenzy|4200|3' as the phase
+-- instead of being ignored. That is exactly the mis-parse the token exists to
+-- prevent, so the race got its own number.
+local WIRE_VERSION = 'v5'
 
 -- No tick for this long means the run is over, or the server stopped talking.
 -- The ticks only exist during a run, so they already carry that fact; the server
@@ -25,6 +40,161 @@ local COLOR_COMBO_HOT = '#5ac85aff'
 -- than as the rules.
 local URGENT_BELOW = 60
 
+-- Matches the 6px side margins the buttons use, so the last row does not sit
+-- flush against the panel edge.
+local BOTTOM_PADDING = 6
+
+-- How long an announcer line stays on screen. A countdown tick is replaced by
+-- the next one a second later, so this only really governs the last one and the
+-- phase banners; a result is held until the run resets, because it is the one
+-- message the player is owed a chance to read.
+local BANNER_MS = 2000
+
+local COLOR_BANNER = '#e0a33cff'
+local COLOR_BANNER_WIN = '#5ac85aff'
+local COLOR_BANNER_LOSS = '#e05a5aff'
+
+-- Multiplied into the ground sprite, not painted over it, so the tile still
+-- reads as forest floor while being unmistakably dangerous. A pure 'red' would
+-- zero the green and blue channels and turn grass almost black, which reads as
+-- a hole rather than as a warning.
+-- Blue for the player's own cast, red for everything else. The two have to be
+-- tellable apart at a glance: the aim rune lands where the player is looking,
+-- which is often the same tile an elite is already aiming at, and a run of
+-- friendly markers that reads as danger teaches the player to ignore danger.
+local COLOR_TELEGRAPH_ENEMY = '#ff6464ff'
+local COLOR_TELEGRAPH_SELF = '#64c8ffff'
+local COLOR_TELEGRAPH_CLEAR = '#ffffffff'
+
+-- How long after the warning window a marker clears itself if the server's own
+-- clear never arrives. The server sends one on resolve, so this only fires on a
+-- dropped packet or a disconnect mid-cast; without it a stuck red tile would
+-- sit there until the client restarts.
+local TELEGRAPH_GRACE_MS = 1000
+
+-- How often the combo bar redraws while it drains. 50 ms is 20 fps of bar,
+-- which is smooth enough that the eye reads it as continuous motion, and over a
+-- 4 second window it is 80 redraws of one widget. The alternative, driving it
+-- off the 1 Hz tick, would step the bar in visible quarters and start it up to
+-- a second late.
+local COMBO_BAR_STEP_MS = 50
+
+-- Sound. One switch: false here and the arena is exactly as quiet as it was
+-- before, with no other edit. The cues exist because in-game sound is dead in
+-- this client: protocolgameparse.cpp reads the server's sound id off the wire
+-- and throws it away, so a run makes no noise of its own. These are driven off
+-- the arena's own opcodes instead, which know what happened rather than
+-- guessing it from combat traffic.
+local SOUND_ENABLED = true
+
+-- The bank names every file after a hash of its contents, so a filename says
+-- nothing about what is inside it. These were picked by decoding
+-- data/sounds/<version>/sounds-*.dat, the protobuf bank the client already
+-- parses at login, and reading each numeric sound effect id against the
+-- ESoundEffectType and ENumericSoundType enums in src/protobuf/sounds.proto.
+-- The id and the type in each comment is where the file came from, so a cue
+-- that sounds wrong is swapped by looking up another id rather than by opening
+-- 815 hashes one at a time.
+--
+-- gap is the shortest time between two plays of the same cue. Kills arrive as
+-- fast as the player lands them and one area kill lands several in a single
+-- frame, so without a floor a Frenzy chain is a stutter rather than a rhythm.
+-- announcer routes the cue through one shared channel, see playCue.
+local SOUND_VERSION = 1525
+local SOUNDS = {
+    -- 2774, type UI, 0.15s. One sharp transient and nothing else, which is what
+    -- makes it usable as the sync mark two recordings are cut against, and it
+    -- is short enough to live in SoundManager's decode cache rather than be
+    -- streamed, so it fires on the frame it is asked for.
+    countdown = {
+        file = 'sound-e3e1a76bce58857fbb12d6a3d5992ac8598de8eab331109f18b9634f0a9c7196.ogg',
+        gain = 0.9, announcer = true,
+    },
+    -- 2776, RAID_ANNOUNCEMENT, 1.29s. The loudest one shot in the bank that is
+    -- not a spell, and the start of a run is the moment worth being loud at.
+    start = {
+        file = 'sound-736ee6347dfa7d9842f634c3ab7396a3b0dcd20c62a920e8a51728689b515801.ogg',
+        gain = 1.0, announcer = true,
+    },
+    -- 2777, SERVER_MESSAGE, 0.88s. Pitched per phase, see PHASE_PITCH.
+    phase = {
+        file = 'sound-34716e6c2af276297f44c84c7646ad311e53fb6deafb8243fccfb3823510447e.ogg',
+        gain = 0.9, announcer = true,
+    },
+    -- 2855, UI, 0.49s, played low. The ticker going dark is a rule being
+    -- applied and not a reward, and a cue that falls is how that reads.
+    dark = {
+        file = 'sound-eefd93cf62b4803eb13295c057ca55805f707e5992c234eaaf67a6c0f8f3a091.ogg',
+        gain = 0.9, announcer = true,
+    },
+    -- 2770 and 2772, both EVENT, 5.2s and 4.2s. Long on purpose: the result
+    -- banner is held until the next run resets the panel, so the sound is held
+    -- with it rather than ending before the player has read the score.
+    resultWin = {
+        file = 'sound-04759ce073034b5d97f546a7783c98b1de2d8e5492971e55058abe3708939298.ogg',
+        gain = 1.0, announcer = true,
+    },
+    resultLoss = {
+        file = 'sound-b3680c4d3a83a483ffa89dabe36bde2b245496b30c91f89e7f10c63bdc902da0.ogg',
+        gain = 1.0, announcer = true,
+    },
+    -- 2854, UI, 0.34s, pitched by the chain, see KILL_PITCH_STEP.
+    kill = {
+        file = 'sound-ffc4150fd6555f3034b512acd9aa917a561876174c25ca2068a0876018dede33.ogg',
+        gain = 0.55, gap = 140,
+    },
+    -- 1022 SpellEnergyBeam and 1018 SpellExplosionRune: the player's own cast
+    -- and its landing. Quiet, because standing in the aim rune costs the player
+    -- nothing and the ear should not be told otherwise. Energy for the cast
+    -- because the marker it goes with is drawn blue.
+    castSelf = {
+        file = 'sound-9e3d4afba9d90aa55468573a7f4500840473502e6c60e136794ef17dd79f9b7d.ogg',
+        gain = 0.45, gap = 180,
+    },
+    hitSelf = {
+        file = 'sound-fb9d2d867a43c8a0b69198c9b021d4e2977f316975df65d7ee2d1768ff5a2c7d.ogg',
+        gain = 0.45, gap = 180,
+    },
+    -- 2032 MonsterSpellLargeAreaDeath at 1.17s and 1062 SpellAnnihilation at
+    -- 0.87s. Both fit inside the 1500 ms warning window, which a longer sample
+    -- would not: a warning still playing after the tile has gone off teaches
+    -- the wrong timing. Loud, because this is the shot that costs health.
+    castEnemy = {
+        file = 'sound-5482fa51dabbb3387cfa711e75c02a5a4baeb775d06bd8629e1b7024b7148588.ogg',
+        gain = 1.0, gap = 180,
+    },
+    hitEnemy = {
+        file = 'sound-0a759c7c486d5bb4c495d6f2171bd9482c945c4c19c42b949b924725219b1e63.ogg',
+        gain = 0.8, gap = 180,
+    },
+}
+
+-- Frenzy is the same announcement played higher. Brief section 6 makes it the
+-- phase where spawn rate and exp both double, and a cue that rises says so
+-- without a second file. Keyed by the server's own phase names from
+-- ArenaConfig.run.phases; a phase not listed here keeps the neutral pitch.
+local PHASE_PITCH = { Elites = 1.0, Frenzy = 1.2 }
+
+-- The kill cue climbs one step per chained kill and stops at 1.6, about eight
+-- semitones over the opening kill. One sample the whole way up, because
+-- SoundManager::play takes a pitch per call.
+local KILL_PITCH_STEP = 0.05
+local KILL_PITCH_MAX = 1.6
+
+-- Every static text the arena drew this run carries this as its speaker name.
+-- Map::addStaticText merges a new message into a live label only when the
+-- position, the name and the mode all match, so a fixed name is what makes two
+-- kills on one tile stack into two lines instead of drawing on top of each
+-- other. A player's own name here would merge our labels with their chat.
+local KILL_TEXT_NAME = 'arena'
+
+-- StaticText::compose picks the colour from the mode and re-runs on every
+-- message, so setColor is overwritten by the next kill that lands on the same
+-- tile. Spell is the mode whose branch sets a readable orange and, unlike Say
+-- or Yell, does not prefix the speaker's name. MessageModes.None falls through
+-- to compose's final else and logs 'Unknown speak type' once per kill.
+local KILL_TEXT_MODE = MessageModes.Spell
+
 -- Imported at file scope, not in onInit: Controller:init() loads the UI before
 -- it calls onInit, so a style registered there would arrive too late.
 g_ui.importStyle('arenabutton')
@@ -35,7 +205,49 @@ arenaHudController:setUI('arenahud', modules.game_interface.getMainRightPanel())
 local lastTickAt = nil
 local running = false
 local probing = false
+local privileged = false
 local arenaButton = nil
+local bannerEvent = nil
+
+-- Live telegraph overlays, keyed by the server's telegraph id. Each entry holds
+-- its source and the ground Things that were tinted, so the clear restores
+-- exactly what was changed rather than recomputing tiles from positions that
+-- may since have scrolled out of view.
+local telegraphs = {}
+
+-- Which live shots cover each tile: coverage[key][telegraphId] is the ground
+-- Thing that shot tinted there. Keyed by an 'x,y,z' string and not by the
+-- ground itself, because LuaInterface::pushObject hands out a fresh userdata on
+-- every push, so two reads of the same ground are two different table keys.
+local coverage = {}
+
+-- Enemy outranks self when two live shots share a tile. A missed hostile
+-- telegraph costs health and a missed friendly one costs nothing, so on a
+-- contested tile the hostile colour is the one that has to survive.
+local TELEGRAPH_SOURCES = {
+    enemy = { color = COLOR_TELEGRAPH_ENEMY, rank = 2, cast = 'castEnemy', hit = 'hitEnemy' },
+    self = { color = COLOR_TELEGRAPH_SELF, rank = 1, cast = 'castSelf', hit = 'hitSelf' },
+}
+
+-- Developer controls. An ordinary player has no business seeing a button that
+-- spawns a 900 hp monster or rebuilds the map, so these are hidden unless the
+-- server says the account is a gamemaster. Hiding is presentation only: the
+-- server refuses these verbs on its own, because a client can always be
+-- modified to draw a button it was told not to.
+local DEV_ONLY = {
+    probeButton = true,
+    simButton = true,
+    telegraphButton = true,
+    eliteButton = true,
+    aimButton = true,
+    mapCaption = true,
+    mapcheckButton = true,
+    mapscanButton = true,
+    mapclearButton = true,
+    gotoButton = true,
+    backButton = true,
+    homeButton = true,
+}
 
 -- Which buttons make sense in which state. Anything absent is always allowed.
 -- Encoded here rather than as ifs scattered through the code so that adding a
@@ -75,6 +287,103 @@ local VERBS = {
     aimButton = 'aim',
 }
 
+-- Cue plumbing. Everything here degrades to silence: a client built without
+-- sound, audio switched off in the options, a bank that was never installed,
+-- all of it ends with the HUD behaving exactly as it does today, because a cue
+-- is decoration on a panel whose numbers are the point.
+local lastCueAt = {}
+local announcerChannel = nil
+
+-- Resolved once per cue and remembered on the entry. fileExists is a PHYSFS
+-- stat and the kill cue runs several times a second, so checking on every play
+-- would pay for the same answer all run. A file the client does not have is
+-- marked dead and never looked at again.
+local function soundPath(snd)
+    if snd.path then
+        return snd.path
+    end
+    if snd.missing then
+        return nil
+    end
+
+    -- The version folder is the one game_things hands to loadClientFiles, so
+    -- the cues follow the installed assets rather than being pinned to the 1525
+    -- bank these ids were read out of.
+    local version = g_game.getClientVersion()
+    if not version or version < 1 then
+        version = SOUND_VERSION
+    end
+
+    local path = string.format('/data/sounds/%d/%s', version, snd.file)
+    local ok, exists = pcall(g_resources.fileExists, path)
+    if not ok or not exists then
+        snd.missing = true
+        return nil
+    end
+
+    snd.path = path
+    -- Decoded and held in memory when it fits SoundManager's 100 KB cache,
+    -- which is every cue under about half a second of 44 kHz stereo. Anything
+    -- larger is streamed and starts on the next 100 ms sound poll instead,
+    -- which is late for a countdown two recordings are aligned against.
+    pcall(g_sounds.preload, path)
+    return path
+end
+
+-- On game start rather than on the first cue, so the decode happens while the
+-- player is looking at a loading screen instead of inside the tick that starts
+-- a run.
+local function primeSounds()
+    if not SOUND_ENABLED or not g_sounds then
+        return
+    end
+
+    for _, snd in pairs(SOUNDS) do
+        soundPath(snd)
+    end
+end
+
+local function playCue(name, pitch)
+    if not SOUND_ENABLED or not g_sounds then
+        return
+    end
+
+    local snd = SOUNDS[name]
+    if not snd then
+        return
+    end
+
+    local now = g_clock.millis()
+    if snd.gap and lastCueAt[name] and now - lastCueAt[name] < snd.gap then
+        return
+    end
+
+    local path = soundPath(snd)
+    if not path then
+        return
+    end
+
+    lastCueAt[name] = now
+
+    -- Announcer cues share SoundChannels.Effect, whose play() stops whatever it
+    -- was playing first, so a result cuts off the phase banner still sounding
+    -- under it. Kill and telegraph cues go straight to the mixer instead: they
+    -- have to overlap, and on a channel every kill would silence the warning
+    -- the player is standing in.
+    if snd.announcer then
+        if announcerChannel == nil then
+            local ok, channel = pcall(g_sounds.getChannel, SoundChannels.Effect)
+            announcerChannel = ok and channel or false
+        end
+        if announcerChannel then
+            pcall(announcerChannel.play, announcerChannel, path, 0, snd.gain or 1, pitch or 1)
+            return
+        end
+    end
+
+    pcall(g_sounds.play, path, 0, snd.gain or 1, pitch or 1)
+end
+
 local function formatClock(seconds)
     return string.format('%d:%02d', math.floor(seconds / 60), seconds % 60)
 end
@@ -104,6 +413,13 @@ local function refresh()
         ui.state:setColor(COLOR_IDLE)
     end
 
+    for id in pairs(DEV_ONLY) do
+        local widget = ui[id]
+        if widget then
+            widget:setVisible(privileged)
+        end
+    end
+
     for id, allowed in pairs(RULES) do
         local button = ui[id]
         if button then
@@ -111,15 +427,358 @@ local function refresh()
         end
     end
 
+    -- The panel is anchored top down, so hiding a widget leaves its row behind
+    -- as empty space unless the height is recomputed. Measured from the children
+    -- rather than written down as two constants: every previous attempt to size
+    -- this panel by eye was wrong, and a measured height also stays correct when
+    -- a button is added later.
+    --
+    -- Deferred by one frame because setVisible above does not re-run the anchor
+    -- layout synchronously, so reading getY() here would return the positions
+    -- from before the change.
+    addEvent(function()
+        local panel = arenaHudController.ui
+        if not panel then
+            return
+        end
+
+        local top = panel:getY()
+        local bottom = top
+        for _, child in ipairs(panel:getChildren()) do
+            if child:isVisible() then
+                local edge = child:getY() + child:getHeight()
+                if edge > bottom then
+                    bottom = edge
+                end
+            end
+        end
+
+        panel:setHeight(bottom - top + BOTTOM_PADDING)
+    end)
+
     if arenaButton then
         arenaButton:setText(running and tr('Stop run') or tr('Start run'))
         arenaButton:setOn(running)
     end
 end
 
+-- Paints one tile the colour of the highest ranked shot still covering it, and
+-- only blanks it when none is left. g_map.colorizeThing sets a single scalar
+-- colour on the ground with no stack and no refcount, so a clear that blanked
+-- unconditionally would white out a tile a second live shot still has armed:
+-- the player would read a tile that is about to hit them as safe.
+--
+-- `fallback` is the ground handle to restore when nothing covers the tile any
+-- more, which is the handle of the shot that just went away.
+local function repaintTile(key, fallback)
+    local at = coverage[key]
+    local winner, winnerGround
+
+    if at then
+        for id, ground in pairs(at) do
+            local shot = telegraphs[id]
+            local source = shot and TELEGRAPH_SOURCES[shot.source]
+            if source and (not winner or source.rank > winner.rank) then
+                winner = source
+                winnerGround = ground
+            end
+        end
+        if not next(at) then
+            coverage[key] = nil
+        end
+    end
+
+    if winner then
+        g_map.colorizeThing(winnerGround, winner.color)
+    elseif fallback then
+        -- Restored to white rather than through g_map.removeThingColor, which
+        -- sets Color::alpha and then fails the client's own canDraw test, so the
+        -- ground stops being drawn at all. A red tile is a bug; a hole in the
+        -- floor where the tile used to be is a much better looking bug and a
+        -- much worse one.
+        g_map.colorizeThing(fallback, COLOR_TELEGRAPH_CLEAR)
+    end
+end
+
+-- Restores every tile one telegraph tinted. Safe to call twice: the entry is
+-- dropped first, so the server's clear and the grace timer cannot fight.
+local function clearTelegraph(id)
+    local shot = telegraphs[id]
+    if not shot then
+        return
+    end
+    telegraphs[id] = nil
+
+    if shot.timer then
+        removeEvent(shot.timer)
+    end
+
+    for _, marked in ipairs(shot.tiles) do
+        local at = coverage[marked.key]
+        if at then
+            at[id] = nil
+        end
+        repaintTile(marked.key, marked.ground)
+    end
+end
+
+local function clearAllTelegraphs()
+    for id in pairs(telegraphs) do
+        clearTelegraph(id)
+    end
+end
+
+-- The live combo window. `endsAt` is a client clock reading rather than a
+-- countdown, so a dropped or delayed frame costs nothing: every step recomputes
+-- from the clock instead of subtracting its own interval.
+local comboBar = { event = nil, endsAt = nil, window = 0 }
+
+local function stopComboBar()
+    if comboBar.event then
+        removeEvent(comboBar.event)
+        comboBar.event = nil
+    end
+    comboBar.endsAt = nil
+
+    local ui = arenaHudController.ui
+    if ui and ui.comboBar then
+        -- Hidden, not emptied. updateBackground floors the fill at one pixel,
+        -- so an empty bar still draws a sliver and reads as a chain with a
+        -- moment left on it.
+        ui.comboBar:setVisible(false)
+    end
+end
+
+local function stepComboBar()
+    comboBar.event = nil
+
+    local ui = arenaHudController.ui
+    if not ui or not ui.comboBar or not comboBar.endsAt then
+        return
+    end
+
+    local left = comboBar.endsAt - g_clock.millis()
+    if left <= 0 then
+        stopComboBar()
+        return
+    end
+
+    ui.comboBar:setPercent(left / comboBar.window * 100)
+    comboBar.event = scheduleEvent(stepComboBar, COMBO_BAR_STEP_MS)
+end
+
+-- Restarts the window on every kill, which is what the server does: run.lua
+-- compares against lastGainAt, so a kill inside the window extends the chain and
+-- resets the clock rather than spending what is left of it.
+local function kickComboBar(windowMs)
+    local ui = arenaHudController.ui
+    if not ui or not ui.comboBar or windowMs <= 0 then
+        return
+    end
+
+    comboBar.window = windowMs
+    comboBar.endsAt = g_clock.millis() + windowMs
+    ui.comboBar:setPercent(100)
+    ui.comboBar:setVisible(true)
+
+    if not comboBar.event then
+        comboBar.event = scheduleEvent(stepComboBar, COMBO_BAR_STEP_MS)
+    end
+end
+
+-- The multiplier is shown only once it is above 1.00x, the same rule the
+-- server's fallback status message uses. A chain of one is worth exactly 1.00x
+-- by ArenaScore.multiplier, so printing `x1.0` on every opening kill would put
+-- the number on screen most often at the one moment it means nothing.
+local function floatKillText(position, points, mult)
+    local label
+    if mult > 100 then
+        label = string.format('+%d  x%.1f', points, mult / 100)
+    else
+        label = string.format('+%d', points)
+    end
+
+    local text = StaticText.create()
+    -- addMessage rather than setText: expiry is scheduled inside addMessage,
+    -- and g_map.removeStaticText is not bound to Lua, so a label built with
+    -- setText alone would sit on the floor until the client restarts. Sixty
+    -- kills a run makes that sixty permanent labels.
+    if text:addMessage(KILL_TEXT_NAME, KILL_TEXT_MODE, label) then
+        g_map.addStaticText(text, position)
+    end
+end
+
+-- Opcode 175. One scoring kill, sent only to the player who earned it.
+local function onArenaKill(protocol, opcode, buffer)
+    local version, x, y, z, points, mult, combo, windowMs =
+        buffer:match('^([^|]*)|(%-?%d+),(%-?%d+),(%-?%d+)|([^|]*)|([^|]*)|([^|]*)|(.*)$')
+
+    if version ~= WIRE_VERSION then
+        return
+    end
+
+    points = tonumber(points)
+    mult = tonumber(mult)
+    combo = tonumber(combo)
+    windowMs = tonumber(windowMs)
+    if not points or not mult or not combo or not windowMs then
+        return
+    end
+
+    floatKillText({ x = tonumber(x), y = tonumber(y), z = tonumber(z) }, points, mult)
+    kickComboBar(windowMs)
+
+    -- The chain is the skill axis brief section 4 is built around, so it is the
+    -- one number the ear should be able to follow without looking at the panel.
+    playCue('kill', math.min(1 + (math.max(combo, 1) - 1) * KILL_PITCH_STEP, KILL_PITCH_MAX))
+
+    -- The same two fields the tick carries, written here as well so the number
+    -- and the bar under it agree. Left to the tick alone the label would sit up
+    -- to a second behind a bar that restarted on the kill, which reads as the
+    -- bar being wrong rather than as the label being slow.
+    local ui = arenaHudController.ui
+    if ui then
+        ui.combo:setText(string.format('x%d = %.2fx', combo, mult / 100))
+        ui.combo:setColor(mult > 100 and COLOR_COMBO_HOT or COLOR_COMBO_IDLE)
+    end
+end
+
+-- Opcode 174. The server marks these tiles with a pulsed effect as well, which
+-- is what a player on the official client or without this module sees. The
+-- pulse is an animation that has to be redrawn six times across the window and
+-- is briefly absent between redraws; brief section 4 makes reading the ground
+-- the top skill axis, so a marker that blinks is not a cosmetic problem.
+--
+-- The ground sprite is tinted rather than the tile filled. Tile:setFill draws a
+-- solid rect and returns before the tile's own contents are drawn, so it would
+-- hide the ground, the items and every creature standing there, including the
+-- player being asked to step off. Tinting multiplies into the ground sprite and
+-- leaves everyone visible.
+local function onArenaTelegraph(protocol, opcode, buffer)
+    local version, id, warnMs, source, tiles =
+        buffer:match('^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$')
+
+    if version ~= WIRE_VERSION then
+        return
+    end
+
+    id = tonumber(id)
+    warnMs = tonumber(warnMs)
+    if not id or not warnMs then
+        return
+    end
+
+    -- Anything the server did not name is hostile. The failure worth guarding
+    -- against is a monster's cast drawn in the player's own colour, not the
+    -- other way round.
+    if not TELEGRAPH_SOURCES[source] then
+        source = 'enemy'
+    end
+
+    -- A zero window is the resolve message, not a telegraph with no warning.
+    if warnMs == 0 then
+        -- Read before the clear, because the live entry is what says whose shot
+        -- this was. A shot whose tiles were all off screen never got an entry
+        -- and deliberately lands silently: it is not on the player's floor.
+        local shot = telegraphs[id]
+        local cues = shot and TELEGRAPH_SOURCES[shot.source]
+        if cues then
+            playCue(cues.hit)
+        end
+        clearTelegraph(id)
+        return
+    end
+
+    clearTelegraph(id)
+
+    local marked = {}
+    for x, y, z in tiles:gmatch('(%-?%d+),(%-?%d+),(%-?%d+)') do
+        local tile = g_map.getTile({ x = tonumber(x), y = tonumber(y), z = tonumber(z) })
+        -- nil for a tile outside the viewport, which is normal rather than an
+        -- error: the server sends the whole shape and the client draws the part
+        -- of it that is on screen.
+        local ground = tile and tile:getGround()
+        if ground then
+            local key = x .. ',' .. y .. ',' .. z
+            marked[#marked + 1] = { key = key, ground = ground }
+
+            local at = coverage[key]
+            if not at then
+                at = {}
+                coverage[key] = at
+            end
+            at[id] = ground
+        end
+    end
+
+    if #marked == 0 then
+        return
+    end
+
+    telegraphs[id] = { tiles = marked, source = source }
+
+    -- Painted after the entry exists, because repaintTile decides a shared
+    -- tile's colour by reading the live shots that cover it, and this one has
+    -- to be among them.
+    for _, tile in ipairs(marked) do
+        repaintTile(tile.key)
+    end
+
+    -- After the early return above, so a shape drawn nowhere makes no sound,
+    -- which keeps the warning and its impact paired.
+    playCue(TELEGRAPH_SOURCES[source].cast)
+
+    -- The server clears on resolve. This only fires if that message never
+    -- arrives, which is a dropped packet or a disconnect mid-cast. Without it a
+    -- red tile stays red until the client restarts.
+    telegraphs[id].timer = scheduleEvent(function()
+        local shot = telegraphs[id]
+        if shot then
+            shot.timer = nil
+            clearTelegraph(id)
+        end
+    end, warnMs + TELEGRAPH_GRACE_MS)
+end
+
+-- `hold` nil means the line stays until something replaces it, which is what a
+-- result wants. Everything else clears itself, so a phase banner does not sit
+-- over the rest of the run.
+local function banner(text, color, hold)
+    if bannerEvent then
+        removeEvent(bannerEvent)
+        bannerEvent = nil
+    end
+
+    local ui = arenaHudController.ui
+    if not ui then
+        return
+    end
+
+    ui.banner:setText(text or '')
+    ui.banner:setColor(color or COLOR_BANNER)
+
+    if text and text ~= '' and hold then
+        bannerEvent = scheduleEvent(function()
+            bannerEvent = nil
+            local panel = arenaHudController.ui
+            if panel then
+                panel.banner:setText('')
+            end
+        end, hold)
+    end
+end
+
 local function setIdle()
     lastTickAt = nil
     running = false
+    -- Every way out of a run reaches here: the server's state push, the idle
+    -- timeout and onGameEnd. A run that ends between a telegraph's cast and its
+    -- resolve would otherwise leave that shape tinted on the floor, and the
+    -- clear for it is never coming, because the run it belonged to is over.
+    clearAllTelegraphs()
+    -- Same reason as the telegraphs above: a run that ends mid chain leaves a
+    -- bar draining towards a window whose kills can no longer be extended.
+    stopComboBar()
 
     local ui = arenaHudController.ui
     if ui then
@@ -129,6 +788,7 @@ local function setIdle()
         ui.score:setText('0')
         ui.combo:setText('x0 = 1.00x')
         ui.combo:setColor(COLOR_COMBO_IDLE)
+        ui.opp:setText('-')
         ui.link:setText(tr('no run'))
     end
     refresh()
@@ -137,8 +797,8 @@ end
 -- The tick payload is pipe delimited rather than JSON because Canary has no Lua
 -- JSON encoder. See "Payload convention" in docs/opcodes.md.
 local function onArenaTick(protocol, opcode, buffer)
-    local version, seq, timeLeft, exp, combo, mult, phase =
-        buffer:match('^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$')
+    local version, seq, timeLeft, exp, combo, mult, phase, oppExp, oppCombo =
+        buffer:match('^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$')
 
     if version ~= WIRE_VERSION then
         -- An older or newer server. Ignoring the message is the whole point of
@@ -154,7 +814,12 @@ local function onArenaTick(protocol, opcode, buffer)
     -- Hundredths of a unit, so 250 means 2.50x. The wire has no float
     -- convention and an integer cannot pick up a locale's decimal comma.
     mult = tonumber(mult)
-    if not seq or not timeLeft or not exp or not combo or not mult then
+    -- -1 for both when there is no opponent, and -1 for the score again during
+    -- the dark last minute. A solo run and a race carry the same nine fields, so
+    -- there is one parser and one panel rather than two of each.
+    oppExp = tonumber(oppExp)
+    oppCombo = tonumber(oppCombo)
+    if not seq or not timeLeft or not exp or not combo or not mult or not oppExp or not oppCombo then
         return
     end
 
@@ -170,6 +835,10 @@ local function onArenaTick(protocol, opcode, buffer)
     lastTickAt = now
     if not running then
         running = true
+        -- Clears the previous match's result, which is deliberately held with no
+        -- timeout. Cleared here rather than on run start because this is the
+        -- first moment the client knows a new run exists.
+        banner('')
         refresh()
     end
 
@@ -187,6 +856,17 @@ local function onArenaTick(protocol, opcode, buffer)
         -- tell the player what chaining is actually paying them.
         ui.combo:setText(string.format('x%d = %.2fx', combo, mult / 100))
         ui.combo:setColor(mult > 100 and COLOR_COMBO_HOT or COLOR_COMBO_IDLE)
+        -- The rival row is the whole reason the race exists: a number you are
+        -- behind is what makes the last two minutes worth playing hard. It says
+        -- so in points rather than as a gap, because a gap of 300 reads the same
+        -- at 400 to 700 as at 4400 to 4700 and those are different races.
+        if oppCombo < 0 then
+            ui.opp:setText('-')
+            ui.opp:setColor(COLOR_COMBO_IDLE)
+        else
+            ui.opp:setText(string.format('%s  x%d', oppExp < 0 and '???' or groupDigits(oppExp), oppCombo))
+            ui.opp:setColor(exp >= 0 and oppExp >= 0 and exp >= oppExp and COLOR_COMBO_HOT or COLOR_COMBO_IDLE)
+        end
         -- tr is string.format (corelib/util.lua), so the arguments go to tr
         -- itself. Wrapping it in another string.format leaves tr with format
         -- specifiers and no values, which throws.
@@ -195,14 +875,64 @@ local function onArenaTick(protocol, opcode, buffer)
 
 end
 
+-- The announcer channel. Fields after the verb differ per verb, so this splits
+-- rather than matching a fixed shape: a countdown carries one number and a
+-- result carries three, and forcing them into one pattern would mean padding
+-- every message to the longest one.
+local function onArenaMatch(protocol, opcode, buffer)
+    local parts = {}
+    for field in buffer:gmatch('[^|]+') do
+        parts[#parts + 1] = field
+    end
+
+    if parts[1] ~= WIRE_VERSION then
+        return
+    end
+
+    local verb = parts[2]
+    if verb == 'countdown' then
+        banner(tr('%s...', parts[3] or ''), COLOR_BANNER, BANNER_MS)
+        playCue('countdown')
+    elseif verb == 'start' then
+        -- Held rather than timed out, because this is the sync mark every
+        -- recording is cut against and a frame of it has to survive.
+        banner(tr('HUNT  vs %s', parts[3] or '?'), COLOR_BANNER_WIN, BANNER_MS)
+        playCue('start')
+    elseif verb == 'phase' then
+        banner(string.upper(parts[3] or ''), COLOR_BANNER, BANNER_MS)
+        playCue('phase', PHASE_PITCH[parts[3] or ''])
+    elseif verb == 'dark' then
+        banner(tr('SCORE HIDDEN'), COLOR_BANNER, BANNER_MS)
+        playCue('dark')
+    elseif verb == 'result' then
+        local outcome = parts[3] or 'draw'
+        local mine = tonumber(parts[4]) or 0
+        local theirs = tonumber(parts[5]) or 0
+        local word = outcome == 'win' and tr('YOU WIN')
+            or outcome == 'loss' and tr('YOU LOSE')
+            or outcome == 'forfeit' and tr('FORFEIT')
+            or tr('DRAW')
+        -- No hold: the result stays until the next run resets the panel. It is
+        -- the one line the player is owed a chance to read, and a run that ends
+        -- while they are reading their own score would otherwise blank it.
+        banner(string.format('%s  %s - %s', word, groupDigits(mine), groupDigits(theirs)),
+            outcome == 'win' and COLOR_BANNER_WIN or outcome == 'loss' and COLOR_BANNER_LOSS or COLOR_BANNER)
+        -- A draw and a forfeit take the same cue as a loss. All three are the
+        -- run ending as something other than the thing it was played for.
+        playCue(outcome == 'win' and 'resultWin' or 'resultLoss')
+    end
+end
+
 local function onArenaState(protocol, opcode, buffer)
-    local version, isRunning, isProbing = buffer:match('^([^|]*)|([^|]*)|([^|]*)$')
+    local version, isRunning, isProbing, isPrivileged =
+        buffer:match('^([^|]*)|([^|]*)|([^|]*)|([^|]*)$')
     if version ~= WIRE_VERSION then
         return
     end
 
     running = isRunning == '1'
     probing = isProbing == '1'
+    privileged = isPrivileged == '1'
     if not running then
         lastTickAt = nil
     end
@@ -223,6 +953,9 @@ end
 function arenaHudController:onInit()
     self:registerExtendedOpcode(OPCODE_TICK, onArenaTick)
     self:registerExtendedOpcode(OPCODE_STATE, onArenaState)
+    self:registerExtendedOpcode(OPCODE_MATCH, onArenaMatch)
+    self:registerExtendedOpcode(OPCODE_TELEGRAPH, onArenaTelegraph)
+    self:registerExtendedOpcode(OPCODE_KILL, onArenaKill)
 
     local ui = self.ui
     if ui then
@@ -255,11 +988,16 @@ function arenaHudController:onGameStart()
     if modules.game_mainpanel and modules.game_mainpanel.addStoreButton then
         arenaButton = modules.game_mainpanel.addStoreButton('arenaRun', tr('Start or stop an arena run'),
             '/images/options/blue_large', onArenaButton, true)
-        if reloadMainPanelSizes then
-            reloadMainPanelSizes()
+        -- Qualified, not the bare global. game_mainpanel is sandboxed, and a
+        -- sandbox env only inherits reads through __index, so a function
+        -- defined there is never in ours: `if reloadMainPanelSizes then` was
+        -- always false and the resize above never happened.
+        if modules.game_mainpanel.reloadMainPanelSizes then
+            modules.game_mainpanel.reloadMainPanelSizes()
         end
     end
 
+    primeSounds()
     setIdle()
     self:sendExtendedOpcode(OPCODE_CONTROL, WIRE_VERSION .. '|ready')
 
@@ -275,6 +1013,7 @@ end
 
 function arenaHudController:onGameEnd()
     probing = false
+    privileged = false
     setIdle()
     if arenaButton then
         arenaButton:destroy()

@@ -136,6 +136,7 @@ public:
     bool isEaxEnabled();
     bool loadClientFiles(const std::string& directory);
     std::string getAudioFileNameById(int32_t audioFileId);
+    std::string getSoundEffectFileById(uint32_t soundEffectId);
 
     void preload(std::string filename);
     SoundSourcePtr play(const std::string& filename, float fadetime = 0, float gain = 0, float pitch = 0);
@@ -160,6 +161,7 @@ private:
     std::unordered_map<std::string, SoundEffectPtr> m_effects;
 
     // soundbanks for protocol 13 and newer
+    std::string m_clientSoundsDirectory;
     std::map<uint32_t, std::string> m_clientSoundFiles;
     std::map<uint32_t, ClientSoundEffect> m_clientSoundEffects;
     std::map<uint32_t, ClientLocationAmbient> m_clientAmbientEffects;

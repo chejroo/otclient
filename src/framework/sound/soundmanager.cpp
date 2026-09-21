@@ -430,6 +430,8 @@ bool SoundManager::loadFromProtobuf(const std::string& directory, const std::str
             throw stdext::exception("Couldn't parse appearances lib.");
         }
 
+        m_clientSoundsDirectory = directory;
+
         // deserialize audio files
         for (const auto& protobufAudioFile : protobufSounds.sound()) {
             m_clientSoundFiles[protobufAudioFile.id()] = protobufAudioFile.filename();
@@ -545,4 +547,24 @@ std::string SoundManager::getAudioFileNameById(int32_t audioFileId)
     }
 
     return "";
+}
+
+// the packet carries a numeric sound effect id, the soundbank keys its files by
+// audio file id, and the stored names are bare, so the directory has to go back on
+std::string SoundManager::getSoundEffectFileById(const uint32_t soundEffectId)
+{
+    const auto effectIt = m_clientSoundEffects.find(soundEffectId);
+    if (effectIt == m_clientSoundEffects.end())
+        return "";
+
+    const auto& effect = effectIt->second;
+    const uint32_t audioFileId = effect.randomSoundId.empty()
+        ? effect.soundId
+        : effect.randomSoundId[stdext::random_range(0, static_cast<int>(effect.randomSoundId.size()) - 1)];
+
+    const auto fileIt = m_clientSoundFiles.find(audioFileId);
+    if (fileIt == m_clientSoundFiles.end())
+        return "";
+
+    return m_clientSoundsDirectory + fileIt->second;
 }

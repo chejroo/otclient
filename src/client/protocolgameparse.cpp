@@ -43,6 +43,9 @@
 #include "paperdoll.h"
 #include <fmt/format.h>
 #include <framework/util/stats.h>
+#ifdef FRAMEWORK_SOUND
+#include <framework/sound/soundmanager.h>
+#endif
 
 void ProtocolGame::parseMessage(const InputMessagePtr& msg)
 {
@@ -1905,6 +1908,18 @@ void ProtocolGame::parseWorldLight(const InputMessagePtr& msg)
     }
 }
 
+// Straight to the mixer instead of the Effect channel, because SoundChannel::play stops
+// whatever that channel is already playing: overlapping combat sounds would truncate each
+// other and every one of them would cut the arena HUD announcer cue underneath it.
+static void playServerSoundEffect([[maybe_unused]] const uint16_t soundEffectId)
+{
+#ifdef FRAMEWORK_SOUND
+    const auto& file = g_sounds.getSoundEffectFileById(soundEffectId);
+    if (!file.empty())
+        g_sounds.play(file);
+#endif
+}
+
 void ProtocolGame::parseMagicEffect(const InputMessagePtr& msg)
 {
     const auto& pos = getPosition(msg);
@@ -1960,14 +1975,14 @@ void ProtocolGame::parseMagicEffect(const InputMessagePtr& msg)
 
                 case Otc::MAGIC_EFFECTS_CREATE_SOUND_MAIN_EFFECT: {
                     msg->getU8(); // Source
-                    msg->getU16(); // Sound ID
+                    playServerSoundEffect(msg->getU16()); // Sound ID
                     break;
                 }
 
                 case Otc::MAGIC_EFFECTS_CREATE_SOUND_SECONDARY_EFFECT: {
                     msg->getU8(); // ENUM
                     msg->getU8(); // Source
-                    msg->getU16(); // Sound ID
+                    playServerSoundEffect(msg->getU16()); // Sound ID
                     break;
                 }
                 default:
