@@ -31,7 +31,11 @@ param(
     # by asking both: 8088 answers 127.0.0.1:7172, 8089 answers the public IP.
     [int]$LoginPort = 8089,
     [int]$Protocol = 1525,
-    [string]$OutDir = "$env:TEMP\exp-arena-dist"
+    # On D:, not in %TEMP%. The zip is 45 MB, it is a deliverable rather than an
+    # intermediate, and C: on this machine is short of space. The workspace root
+    # is not a git repo and neither repo tracks anything above itself, so nothing
+    # here can be committed by accident.
+    [string]$OutDir = "D:\appken\exp-arena\dist"
 )
 
 $ErrorActionPreference = "Stop"
