@@ -171,8 +171,12 @@ optionsController = Controller:new()
 optionsController:setUI('mainoptionspanel', modules.game_interface.getMainRightPanel())
 
 function optionsController:onInit()
-    createButton_large('Store shop', tr('Store shop'), '/images/options/store_large', toggleStore,
-    false, 8)
+    -- Exp Arena has no store. Brief section 15 puts monetization after retention
+    -- is proven, and there is no Tibia store behind this server to open, so the
+    -- button would only ever show an error. toggleStore below is left in place
+    -- because game_shop still calls it.
+    -- createButton_large('Store shop', tr('Store shop'), '/images/options/store_large', toggleStore,
+    -- false, 8)
 
     if not optionPanel then
         optionPanel = g_ui.loadUI('option_control_buttons', modules.client_options:getPanel())

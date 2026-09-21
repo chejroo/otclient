@@ -1,0 +1,264 @@
+PhantomMiniWindow
+  id: arenaHudPanel
+  draggable: true
+  phantom: false
+  &panelHeight: 324
+  height: 324
+
+  HorizontalSeparator
+    id: sep0
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-left: 6
+    margin-right: 6
+    margin-top: 4
+
+  Label
+    id: state
+    !text: 'IDLE'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: sep0.bottom
+    margin-left: 8
+    margin-right: 8
+    margin-top: 5
+    text-align: center
+    color: #808080ff
+    font: verdana-11px-rounded
+
+  Label
+    id: clock
+    !text: '0:00'
+    anchors.left: parent.left
+    anchors.top: state.bottom
+    margin-left: 8
+    margin-top: 5
+    width: 60
+    text-align: left
+    color: #ffffffff
+    font: verdana-11px-rounded
+
+  Label
+    id: phase
+    !text: '-'
+    anchors.right: parent.right
+    anchors.top: state.bottom
+    margin-right: 8
+    margin-top: 5
+    width: 90
+    text-align: right
+    color: #c0c0c0ff
+
+  Label
+    id: scoreCaption
+    !text: 'Score'
+    anchors.left: parent.left
+    anchors.top: clock.bottom
+    margin-left: 8
+    margin-top: 4
+    width: 44
+    color: #9e9e9eff
+
+  Label
+    id: score
+    !text: '0'
+    anchors.left: scoreCaption.right
+    anchors.right: parent.right
+    anchors.top: clock.bottom
+    margin-right: 8
+    margin-top: 4
+    text-align: right
+    color: #e0e0e0ff
+
+  Label
+    id: comboCaption
+    !text: 'Combo'
+    anchors.left: parent.left
+    anchors.top: score.bottom
+    margin-left: 8
+    margin-top: 2
+    width: 44
+    color: #9e9e9eff
+
+  Label
+    id: combo
+    !text: 'x0'
+    anchors.left: comboCaption.right
+    anchors.right: parent.right
+    anchors.top: score.bottom
+    margin-right: 8
+    margin-top: 2
+    text-align: right
+    color: #e0e0e0ff
+
+  Label
+    id: link
+    !text: 'no run'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: combo.bottom
+    margin-left: 8
+    margin-right: 8
+    margin-top: 3
+    text-align: center
+    color: #8c8c8cff
+
+  HorizontalSeparator
+    id: sep1
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: link.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 5
+
+  ArenaButton
+    id: startButton
+    !text: 'Start'
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.top: sep1.bottom
+    margin-left: 6
+    margin-right: 2
+    margin-top: 5
+
+  ArenaButton
+    id: stopButton
+    !text: 'Stop'
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.top: sep1.bottom
+    margin-left: 2
+    margin-right: 6
+    margin-top: 5
+
+  ArenaButton
+    id: statusButton
+    !text: 'Status'
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.top: startButton.bottom
+    margin-left: 6
+    margin-right: 2
+    margin-top: 3
+
+  ArenaButton
+    id: probeButton
+    !text: 'Probe'
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.top: stopButton.bottom
+    margin-left: 2
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: telegraphButton
+    !text: 'Telegraph'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: statusButton.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: eliteButton
+    !text: 'Spawn elite'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: telegraphButton.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: aimButton
+    !text: 'Give aim rune'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: eliteButton.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: simButton
+    !text: 'Score sim'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: aimButton.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 3
+
+  Label
+    id: mapCaption
+    !text: 'map tools'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: simButton.bottom
+    margin-top: 5
+    text-align: center
+    color: #8c8c8cff
+
+  ArenaButton
+    id: mapcheckButton
+    !text: 'Check'
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.top: mapCaption.bottom
+    margin-left: 6
+    margin-right: 2
+    margin-top: 3
+
+  ArenaButton
+    id: mapscanButton
+    !text: 'Scan'
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.top: mapCaption.bottom
+    margin-left: 2
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: mapclearButton
+    !text: 'Clear'
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.top: mapcheckButton.bottom
+    margin-left: 6
+    margin-right: 2
+    margin-top: 3
+
+  ArenaButton
+    id: gotoButton
+    !text: 'Go to'
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.top: mapscanButton.bottom
+    margin-left: 2
+    margin-right: 6
+    margin-top: 3
+
+  ArenaButton
+    id: backButton
+    !text: 'Back'
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.top: mapclearButton.bottom
+    margin-left: 6
+    margin-right: 2
+    margin-top: 3
+
+  ArenaButton
+    id: homeButton
+    !text: 'Home'
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.top: gotoButton.bottom
+    margin-left: 2
+    margin-right: 6
+    margin-top: 3

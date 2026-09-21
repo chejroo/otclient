@@ -1,0 +1,10 @@
+Module
+  name: game_arenahud
+  description: Exp Arena run HUD, driven by extended opcode 170
+  author: Exp Arena
+  sandboxed: true
+  autoload: true
+  autoload-priority: 1100
+  scripts: [ arenahud ]
+  @onLoad: arenaHudController:init()
+  @onUnload: arenaHudController:terminate()

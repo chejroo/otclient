@@ -334,3 +334,17 @@ android/build/
 luajit-src/
 CMakeUserPresets.json
 **/.canary-shared-cache/
+
+# === Exp Arena: Tibia client assets (CipSoft IP, never commit) ===
+# data/things/*/ mirrors upstream's own rule: the asset version folders are
+# ignored, but data/things/.gitignore and README.md stay tracked.
+data/things/*/
+data/sprites/
+*.spr
+*.otfi
+*.otb
+appearances*.dat
+catalog-content.json
+# Local client state
+config.otml
+*.log

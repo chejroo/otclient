@@ -219,6 +219,13 @@ function cancel()
     hide()
 end
 
+-- The settings key keeps the scheme on purpose. OTML only handles a colon
+-- inside a key for lines starting with http:// or https:// (otmlparser.cpp,
+-- isUrlWithColon); every other line splits on the FIRST colon. Stripping the
+-- scheme here produced keys like "127.0.0.1:8088/login", which the emitter
+-- wrote unquoted and the parser then read back as key "127.0.0.1" with value
+-- "8088/login:". The effect was that hotkeys silently failed to persist for any
+-- server whose host carries a port.
 function load(forceDefaults)
     local serverHost = nil
     hotkeysManagerLoaded = false
@@ -231,7 +238,7 @@ function load(forceDefaults)
     end
     if perServer and not table.empty(hotkeys) then
         if G.host ~= nil then
-            serverHost = string.gsub(G.host, "^https?://", "")
+            serverHost = G.host
             hotkeys = hotkeys[serverHost]
         end
     end
@@ -279,7 +286,7 @@ function reload()
 end
 
 function save()
-    local serverHost = string.gsub(G.host, "^https?://", "")
+    local serverHost = G.host
     local hotkeySettings = g_settings.getNode('game_hotkeys') or {}
     local hotkeys = hotkeySettings
 
