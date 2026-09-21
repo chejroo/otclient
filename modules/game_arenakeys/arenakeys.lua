@@ -29,6 +29,16 @@ local BINDING = 'Space'
 -- The first bar, which is the row along the bottom of the screen.
 local ACTION_BAR = 1
 
+-- How far along the bar to look for room. The bar holds 50 buttons; a kit that
+-- needed more than the first 30 free would be lost off the end of what anyone
+-- can see anyway.
+local SLOT_SEARCH_LIMIT = 30
+
+-- Slots this run's manifest has already claimed, so six entries arriving as six
+-- separate messages do not all pick the same free slot. Reset when a manifest
+-- starts, which is the first bind after any non-bind verb.
+local taken = {}
+
 local bound = false
 
 local function attackNext()
@@ -89,8 +99,25 @@ local function buttonAt(slot)
     return nil
 end
 
--- Writes one kit entry into a slot, and refuses to touch a slot that already
--- has something in it.
+-- The first slot on the bar that holds nothing, searched from the start.
+--
+-- Searched rather than assumed, because the obvious slots are taken. The shipped
+-- defaults fill buttons 1 to 5 for every vocation, and a profile that has been
+-- played fills more: this machine's Paladin set occupies 1 to 6. Placing the kit
+-- at 1 to 6 therefore placed nothing at all, six times, silently.
+local function firstFreeSlot(api, taken)
+    for slot = 1, SLOT_SEARCH_LIMIT do
+        if not taken[slot] then
+            local existing = api.getMapping(ACTION_BAR, slot)
+            if not (existing and existing.actionsetting) then
+                return slot
+            end
+        end
+    end
+    return nil
+end
+
+-- Writes one kit entry into the first free slot.
 --
 -- Never overwriting is the whole point. A player who dragged the potion where
 -- they want it keeps it there, a player who filled slot 3 with something of
@@ -98,26 +125,32 @@ end
 -- alternative, rewriting the bar at every run start, would undo the player's
 -- own arrangement several times an evening and would read as the client fighting
 -- them.
-local function placeOnBar(slot, entry)
+local function placeOnBar(taken, entry)
     local api = modules.game_actionbar and modules.game_actionbar.ApiJson
     local update = modules.game_actionbar and modules.game_actionbar.updateButton
     if not api or not update then
+        g_logger.info('arena kit: no action bar to place ' .. entry.label .. ' on')
         return false
     end
 
-    local existing = api.getMapping(ACTION_BAR, slot)
-    if existing and existing.actionsetting then
+    local slot = firstFreeSlot(api, taken)
+    if not slot then
+        -- Said out loud. This used to return quietly, so a bar with no room
+        -- looked exactly like a kit that had been delivered.
+        g_logger.info('arena kit: no free action bar slot for ' .. entry.label)
         return false
     end
+    taken[slot] = true
 
     if entry.kind == 'say' then
         -- sendAutomatically, so the slot casts rather than typing the words into
         -- the chat box and waiting for a return.
         api.createOrUpdateText(ACTION_BAR, slot, entry.payload, true)
     elseif entry.kind == 'item' then
-        -- useType is the USE constant the server picked: 4 uses the item at the
-        -- cursor, which is the aim rune and the machete, 1 uses it on the
-        -- player, which is the potions.
+        -- useType is the action bar's own name for it, and it has to be the
+        -- name: the consumer reads UseTypes[value] from a table with string keys
+        -- only, so a number falls through to plain Use and fires the item at
+        -- nothing. A rune or a machete used at nothing does nothing.
         api.createOrUpdateAction(ACTION_BAR, slot, entry.useType, entry.itemId, 0)
     else
         return false
@@ -159,9 +192,10 @@ end
 -- bind carrying four fields the clear does not, so this splits rather than
 -- matching a fixed shape, the way opcode 173 is handled in arenahud.lua.
 --
--- The key field is still on the wire and is read only for its number, which
--- decides the slot. The server names keys because it once bound them; it now
--- describes an order, and nothing here binds anything.
+-- The key field is still on the wire and is now ignored entirely. It once named
+-- a binding, then it named a slot, and neither survived contact: the slots it
+-- named were already full. The order entries arrive in is the order they go on
+-- the bar, and which key fires them is the player's business.
 local function onArenaKeys(protocol, opcode, buffer)
     local parts = split(buffer, 6)
     if parts[1] ~= WIRE_VERSION then
@@ -172,8 +206,10 @@ local function onArenaKeys(protocol, opcode, buffer)
     -- A clear leaves the bar alone. The kit items are gone from the inventory by
     -- then and the slot simply greys out, which is the same thing that happens
     -- to any item hotkey when the item runs out, and it means the player's
-    -- arrangement survives the end of a run.
+    -- arrangement survives the end of a run. All it does here is forget which
+    -- slots this run claimed, so the next run looks at the bar fresh.
     if verb ~= 'bind' then
+        taken = {}
         return
     end
 
@@ -182,18 +218,15 @@ local function onArenaKeys(protocol, opcode, buffer)
         return
     end
 
-    local slot = tonumber(key:match('%d+'))
-    if not slot then
-        return
-    end
-
     local entry = { kind = kind, label = parts[6] or key }
     if kind == 'say' then
         entry.payload = payload
     elseif kind == 'item' then
-        local itemId, useType = payload:match('^(%d+),(%d+)$')
+        -- The use type is a name, not a number, so this reads to the comma and
+        -- takes the rest as it stands rather than matching digits.
+        local itemId, useType = payload:match('^(%d+),(%S+)$')
         entry.itemId = tonumber(itemId)
-        entry.useType = tonumber(useType)
+        entry.useType = useType
         if not entry.itemId or not entry.useType then
             return
         end
@@ -203,7 +236,7 @@ local function onArenaKeys(protocol, opcode, buffer)
 
     -- Wrapped, because the action bar is upstream code reached across a module
     -- boundary and a change there must not be able to break a run.
-    pcall(placeOnBar, slot, entry)
+    pcall(placeOnBar, taken, entry)
 end
 
 function init()

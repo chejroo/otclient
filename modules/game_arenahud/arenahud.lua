@@ -206,6 +206,12 @@ local lastTickAt = nil
 local running = false
 local probing = false
 local privileged = false
+-- Set by a race result and cleared on the first tick of the next run. It exists
+-- so the summary that follows every run end does not paint over the one message
+-- that says who won. Declared up here with the other state rather than next to
+-- the handler that sets it, because the tick handler clears it and runs first in
+-- this file: a local declared below its use is a different variable, silently.
+local resultHeld = false
 local arenaButton = nil
 local bannerEvent = nil
 
@@ -848,6 +854,11 @@ local function onArenaTick(protocol, opcode, buffer)
         -- timeout. Cleared here rather than on run start because this is the
         -- first moment the client knows a new run exists.
         banner('')
+        -- And the flag that held it. It used to be cleared only by the
+        -- countdown verb, which only a race sends, so after one race every
+        -- solo run that followed was silently denied its summary banner
+        -- forever. Every run sends ticks; not every run sends a countdown.
+        resultHeld = false
         refresh()
     end
 
@@ -888,11 +899,6 @@ end
 -- rather than matching a fixed shape: a countdown carries one number and a
 -- result carries three, and forcing them into one pattern would mean padding
 -- every message to the longest one.
--- Set by a race result and cleared when a run starts. It exists so the summary
--- that follows every run end does not paint over the one message that says who
--- won.
-local resultHeld = false
-
 local function onArenaMatch(protocol, opcode, buffer)
     local parts = {}
     for field in buffer:gmatch('[^|]+') do
@@ -949,11 +955,17 @@ local function onArenaMatch(protocol, opcode, buffer)
 
         -- The score row first, because that is where the player is already
         -- looking and it has been showing ??? since the ticker went dark.
+        --
+        -- tr IS string.format, so its arguments go to tr itself. Wrapping it in
+        -- another string.format leaves tr holding specifiers with no values and
+        -- it throws, which is documented twenty lines above this and was written
+        -- wrong here three times anyway.
+        local ui = arenaHudController.ui
         if ui then
             ui.score:setText(groupDigits(score))
-            ui.combo:setText(string.format(tr('avg x%.2f'), avgCombo))
+            ui.combo:setText(tr('avg x%.2f', avgCombo))
             ui.combo:setColor(COLOR_COMBO_IDLE)
-            ui.link:setText(string.format(tr('%d kills, %d of %d dodged'), kills, dodged, warned))
+            ui.link:setText(tr('%d kills, %d of %d dodged', kills, dodged, warned))
         end
 
         -- In a race the result banner has already landed and says who won,
@@ -961,7 +973,7 @@ local function onArenaMatch(protocol, opcode, buffer)
         -- overwrite it. Solo, there is no result, and this is the only banner
         -- the run ever gets.
         if not resultHeld then
-            banner(string.format(tr('%s  %d kills'), groupDigits(score), kills), COLOR_BANNER_WIN)
+            banner(tr('%s  %d kills', groupDigits(score), kills), COLOR_BANNER_WIN)
             playCue('resultWin')
         end
     end
