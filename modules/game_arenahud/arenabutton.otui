@@ -20,3 +20,73 @@ ArenaButton < Button
     color: #ffffffff
     opacity: 1.0
     change-cursor-image: false
+
+# One slot of the kit bar. It is here rather than in arenahud.otui because
+# loadUI takes exactly one main widget per file and arenahud.otui has already
+# spent that on the panel, and it is a style rather than six copies in the panel
+# because the six slots differ only in which key they carry.
+#
+# Commented with # and not with the -- above, which is not an OTML comment at
+# all: the parser knows // and #, so every -- line is parsed as a node and then
+# dropped by importStyle because it carries no <. That is harmless in a style
+# file and would not be in one loadUI builds widgets from.
+#
+# The whole box is one UIItem. UIItem::drawSelf paints the background, then the
+# image, then the item sprite, then the border and the text, so one widget holds
+# a spell icon clipped out of the spell sheet, an item sprite, or the kit's own
+# words when neither lookup answered. Three stacked children would draw the same
+# three things and then have to be hidden against each other on every manifest.
+#
+# padding keeps the item sprite off the border, because UIItem releases the
+# sprite's frame buffer into getPaddingRect(). image-rect is the same inset for
+# the spell sheet, which is drawn straight into the widget rect and would
+# otherwise sit on top of the border.
+#
+# virtual is what stops the slot being dragged out as if it were a real item:
+# UIItem:onDragEnter and onDragLeave both bail on a virtual widget, and the
+# second of the two ends with setBorderWidth(0), which would quietly erase the
+# border below. phantom already keeps the mouse off it, so this is the belt to
+# that brace and it is also what lets the parent slot own the tooltip.
+ArenaKitSlot < UIWidget
+  width: 24
+  focusable: false
+
+  UIItem
+    id: icon
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    height: 24
+    padding: 1
+    image-rect: 1 1 22 22
+    phantom: true
+    virtual: true
+    background-color: #00000099
+    border-width: 1
+    border-color: #3c3c3cff
+    text-align: top-center
+    text-wrap: true
+    font: verdana-7px-rounded
+    # White and set here rather than per slot in Lua, for two reasons. color is
+    # multiplied into the item sprite by UIItem::drawSelf, so anything below
+    # white dims the potion and the rune. And a state change re-merges the base
+    # style over the widget, so a colour written from Lua would be thrown away
+    # the first time the slot flashed.
+    color: #ffffffff
+
+    # The pressed flash brightens the face rather than dimming it. An empty slot
+    # is already dark, so a dim flash there would be invisible at exactly the
+    # moment the player is asking whether the press landed.
+    $on:
+      background-color: #ffffff59
+      border-color: #ffffffff
+
+  Label
+    id: key
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: icon.bottom
+    height: 12
+    text-align: center
+    font: verdana-8px-rounded
+    color: #5a5a5aff

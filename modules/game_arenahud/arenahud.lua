@@ -34,6 +34,22 @@ local COLOR_CLOCK_URGENT = '#e05a5aff'
 local COLOR_COMBO_IDLE = '#e0e0e0ff'
 local COLOR_COMBO_HOT = '#5ac85aff'
 
+-- The kit bar. One slot per key the server hands out on opcode 176, drawn in
+-- this order. A key the manifest names that is not in this list still binds,
+-- because game_arenakeys does the binding and asks for a slot afterwards; it
+-- simply has nowhere to be drawn, which is the right way round.
+local KIT_KEYS = { 'F1', 'F2', 'F3', 'F4', 'F5', 'F6' }
+
+-- How long a slot stays lit after its key fires. Long enough to catch at 60
+-- fps, short enough that mashing one key reads as several flashes rather than
+-- one steady light. This is feedback that the press was accepted and nothing
+-- more: the client is never told the server's cooldowns, so a sweep here would
+-- be a drawing of a number we do not have.
+local KIT_FLASH_MS = 120
+
+local COLOR_KIT_KEY = '#c8c8c8ff'
+local COLOR_KIT_KEY_IDLE = '#5a5a5aff'
+
 -- Brief section 6 hides the score ticker for the final 60 seconds, so the run
 -- ends on a guess. The clock going red is what tells the player that moment has
 -- arrived: without it the score just turns into ??? and reads as a bug rather
@@ -595,6 +611,147 @@ local function kickComboBar(windowMs)
     end
 end
 
+-- The live kit bar, keyed by the OTClient combo string, plus the flash timer
+-- each slot has running. Both are empty until onInit builds the row.
+local kitSlots = {}
+local kitFlash = {}
+
+local function buildKitBar()
+    local ui = arenaHudController.ui
+    if not ui or not ui.kitRow then
+        return
+    end
+
+    for _, key in ipairs(KIT_KEYS) do
+        local slot = g_ui.createWidget('ArenaKitSlot', ui.kitRow)
+        slot:setId('kitSlot' .. key)
+        slot.key:setText(key)
+        kitSlots[key] = slot
+    end
+end
+
+-- Blanks both halves of the slot, not just the one in use. A slot that held a
+-- spell and is handed an item next run would otherwise keep the spell sheet
+-- clipped underneath the new sprite, because UIItem draws the image and the
+-- item on top of each other rather than instead of each other.
+local function resetKitSlot(slot)
+    slot.icon:setItemId(0)
+    slot.icon:setImageSource('')
+    slot.icon:setText('')
+    slot.icon:setOn(false)
+end
+
+-- The manifest carries a spell's words and SpellInfo is keyed by its name, so
+-- the lookup goes through gamelib's own scan rather than a table of the three
+-- spells kept here. A private copy would be a second place the server's kit has
+-- to be mirrored, and it would be the one nobody remembers to update.
+local function fillSpellSlot(slot, words)
+    if not words or not Spells or not Spells.getSpellByWords then
+        return false
+    end
+
+    local spell, profile = Spells.getSpellByWords(words)
+    local clientId = spell and tonumber(spell.clientId)
+    -- Not `if not clientId`: Ultimate Healing is clientId 0, the first tile in
+    -- the sheet, and a zero is truthy in Lua for exactly this reason.
+    if clientId == nil or not SpelllistSettings or not SpelllistSettings[profile] then
+        return false
+    end
+
+    slot.icon:setImageSource(SpelllistSettings[profile].iconFile)
+    slot.icon:setImageClip(Spells.getImageClip(clientId, profile))
+    return true
+end
+
+local function fillItemSlot(slot, itemId)
+    if not itemId then
+        return false
+    end
+
+    slot.icon:setItemId(itemId)
+    -- Item::setId clamps an id the client's appearances do not carry to 0
+    -- rather than refusing it, and UIItem::getItemId reads back off that Item,
+    -- so this is the only way to tell a drawn sprite from an invisible one.
+    if slot.icon:getItemId() == 0 then
+        slot.icon:setItemId(0)
+        return false
+    end
+    return true
+end
+
+-- Called by game_arenakeys after it has bound the key, never before. See the
+-- note on tellHud in arenakeys.lua for why the wire is owned there.
+function setArenaKitSlot(key, action)
+    local slot = kitSlots[key]
+    if not slot or type(action) ~= 'table' then
+        return
+    end
+
+    resetKitSlot(slot)
+
+    local drawn = false
+    if action.kind == 'say' then
+        drawn = fillSpellSlot(slot, action.payload)
+    elseif action.kind == 'item' then
+        drawn = fillItemSlot(slot, action.itemId)
+    end
+
+    -- A lookup that found nothing still gets the kit's own words in the slot.
+    -- The name is what the player needs; the picture is what makes it readable
+    -- at a glance, and half of that beats a box that says nothing at all.
+    local label = action.label or key
+    if not drawn then
+        slot.icon:setText(label)
+    end
+    slot.key:setColor(COLOR_KIT_KEY)
+    slot:setTooltip(label)
+end
+
+function clearArenaKitSlot(key)
+    local slot = kitSlots[key]
+    if not slot then
+        return
+    end
+
+    if kitFlash[key] then
+        removeEvent(kitFlash[key])
+        kitFlash[key] = nil
+    end
+
+    resetKitSlot(slot)
+    slot.key:setColor(COLOR_KIT_KEY_IDLE)
+    slot:removeTooltip()
+end
+
+-- Driven by the key actually firing rather than by the run state, because the
+-- bar's job is to say what the keyboard will do. The keys are bound by the
+-- manifest and unbound by its clear, so the bar follows those two messages and
+-- nothing else: emptying it on a missed tick would claim keys were gone while
+-- they were still live.
+function flashArenaKitSlot(key)
+    local slot = kitSlots[key]
+    if not slot then
+        return
+    end
+
+    if kitFlash[key] then
+        removeEvent(kitFlash[key])
+    end
+
+    slot.icon:setOn(true)
+    -- The widget is looked up again rather than captured, and checked, because
+    -- this is the one path here that is not called from inside a pcall: a
+    -- module reload inside the flash window would otherwise fire the timer at a
+    -- destroyed slot whose child field is already gone.
+    kitFlash[key] = scheduleEvent(function()
+        kitFlash[key] = nil
+        local lit = kitSlots[key]
+        if lit and lit.icon then
+            lit.icon:setOn(false)
+        end
+    end, KIT_FLASH_MS)
+end
+
 -- The multiplier is shown only once it is above 1.00x, the same rule the
 -- server's fallback status message uses. A chain of one is worth exactly 1.00x
 -- by ArenaScore.multiplier, so printing `x1.0` on every opening kill would put
@@ -1012,6 +1169,11 @@ function arenaHudController:onInit()
             end
         end
     end
+
+    -- Once, here rather than per game start: the panel is built by setUI and
+    -- lives for the whole session, so rebuilding the row on every login would
+    -- stack six more slots into the same layout each time.
+    buildKitBar()
 
     setIdle()
 end
