@@ -1,6 +1,6 @@
 Module
   name: game_arenakeys
-  description: Exp Arena key bindings, Space to attack plus the run kit the server sends on opcode 176
+  description: Exp Arena defaults, Space to attack and the run kit placed on the action bar
   author: Exp Arena
   sandboxed: true
   autoload: true
