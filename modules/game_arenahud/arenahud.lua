@@ -445,7 +445,14 @@ local function refresh()
         local top = panel:getY()
         local bottom = top
         for _, child in ipairs(panel:getChildren()) do
-            if child:isVisible() then
+            -- Children that fill the parent are skipped, and without this the
+            -- measurement could only ever grow. PhantomMiniWindow's first child
+            -- is a background widget with anchors.fill: parent, so its bottom
+            -- edge IS the panel's bottom edge by definition: the loop always
+            -- measured at least the current height, the twelve hidden dev rows
+            -- never collapsed, and the panel crept a padding's worth taller on
+            -- every refresh until game_mainpanel snapped it back.
+            if child:isVisible() and child:getHeight() < panel:getHeight() then
                 local edge = child:getY() + child:getHeight()
                 if edge > bottom then
                     bottom = edge
@@ -453,7 +460,9 @@ local function refresh()
             end
         end
 
-        panel:setHeight(bottom - top + BOTTOM_PADDING)
+        if bottom > top then
+            panel:setHeight(bottom - top + BOTTOM_PADDING)
+        end
     end)
 
     if arenaButton then
@@ -879,6 +888,11 @@ end
 -- rather than matching a fixed shape: a countdown carries one number and a
 -- result carries three, and forcing them into one pattern would mean padding
 -- every message to the longest one.
+-- Set by a race result and cleared when a run starts. It exists so the summary
+-- that follows every run end does not paint over the one message that says who
+-- won.
+local resultHeld = false
+
 local function onArenaMatch(protocol, opcode, buffer)
     local parts = {}
     for field in buffer:gmatch('[^|]+') do
@@ -891,6 +905,11 @@ local function onArenaMatch(protocol, opcode, buffer)
 
     local verb = parts[2]
     if verb == 'countdown' then
+        -- Cleared here rather than at run end, because it has to survive the
+        -- summary that lands straight after a result. Every race opens with a
+        -- countdown, so this is the one point that is always before the next
+        -- result and always after the last one.
+        resultHeld = false
         banner(tr('%s...', parts[3] or ''), COLOR_BANNER, BANNER_MS)
         playCue('countdown')
     elseif verb == 'start' then
@@ -920,6 +939,31 @@ local function onArenaMatch(protocol, opcode, buffer)
         -- A draw and a forfeit take the same cue as a loss. All three are the
         -- run ending as something other than the thing it was played for.
         playCue(outcome == 'win' and 'resultWin' or 'resultLoss')
+        resultHeld = true
+    elseif verb == 'summary' then
+        local score = tonumber(parts[3]) or 0
+        local kills = tonumber(parts[4]) or 0
+        local avgCombo = (tonumber(parts[5]) or 0) / 100
+        local dodged = tonumber(parts[6]) or 0
+        local warned = tonumber(parts[7]) or 0
+
+        -- The score row first, because that is where the player is already
+        -- looking and it has been showing ??? since the ticker went dark.
+        if ui then
+            ui.score:setText(groupDigits(score))
+            ui.combo:setText(string.format(tr('avg x%.2f'), avgCombo))
+            ui.combo:setColor(COLOR_COMBO_IDLE)
+            ui.link:setText(string.format(tr('%d kills, %d of %d dodged'), kills, dodged, warned))
+        end
+
+        -- In a race the result banner has already landed and says who won,
+        -- which matters more than a personal total, so the summary does not
+        -- overwrite it. Solo, there is no result, and this is the only banner
+        -- the run ever gets.
+        if not resultHeld then
+            banner(string.format(tr('%s  %d kills'), groupDigits(score), kills), COLOR_BANNER_WIN)
+            playCue('resultWin')
+        end
     end
 end
 
