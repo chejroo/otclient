@@ -38,26 +38,6 @@ local bound = false
 -- a fresh closure would not disconnect the old one.
 local actions = {}
 
--- The kit bar is drawn by game_arenahud and the manifest arrives here, so one
--- of the two has to tell the other. This module keeps the wire, because opcode
--- 176 has room for exactly one handler: ProtocolGame.registerExtendedOpcode
--- stores one callback per opcode and errors with "Opcode is already taken" on a
--- second, so the HUD cannot simply listen alongside us. Moving the manifest
--- into the HUD instead would put the keyboard bindings behind the lifecycle of
--- a Controller and a panel, which is the wrong way round for the same reason
--- this module exists at all.
---
--- Every call goes through pcall and every call happens AFTER the binding it
--- describes. Working keys with no icons is a bad afternoon; icons with no keys
--- is an unplayable run.
-local function tellHud(fn, ...)
-    local hud = modules.game_arenahud
-    if not hud or not hud[fn] then
-        return
-    end
-    pcall(hud[fn], ...)
-end
-
 local function attackNext()
     if not g_game.isOnline() then
         return
@@ -119,10 +99,6 @@ local function runAction(action)
             modules.game_hotkeys.executeHotkeyItem(action.useType, action.itemId)
         end
     end
-
-    -- After the gap gate, so a press the gate swallowed does not light a slot
-    -- for something that never happened.
-    tellHud('flashArenaKitSlot', action.key)
 end
 
 local function unbindAction(key)
@@ -133,10 +109,6 @@ local function unbindAction(key)
     actions[key] = nil
 
     g_keyboard.unbindKeyDown(key, action.callback, rootWidget)
-
-    -- Covers the manifest's own clear, a logout and a module reload, because
-    -- all three reach here through clearActions.
-    tellHud('clearArenaKitSlot', key)
 end
 
 -- No hotkeys manager block is taken while these are live. The kit hands out
@@ -165,13 +137,8 @@ local function bindAction(key, action)
     action.callback = function()
         runAction(action)
     end
-    -- Carried on the action so runAction, which only ever sees the action, can
-    -- name the slot to flash without a second lookup.
-    action.key = key
     actions[key] = action
     g_keyboard.bindKeyDown(key, action.callback, rootWidget)
-
-    tellHud('setArenaKitSlot', key, action)
 
     g_logger.info(string.format('arena key %s: %s', key, action.label))
 end

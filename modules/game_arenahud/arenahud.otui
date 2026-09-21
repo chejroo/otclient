@@ -2,11 +2,8 @@ PhantomMiniWindow
   id: arenaHudPanel
   draggable: true
   phantom: false
-  # 382 before the kit bar, plus its 4 of margin and 36 of row. game_mainpanel
-  # writes this value straight back onto the panel in reloadMainPanelSizes, so
-  # it has to be the full height rather than the one refresh() measures.
-  &panelHeight: 422
-  height: 422
+  &panelHeight: 382
+  height: 382
 
   HorizontalSeparator
     id: sep0
@@ -158,35 +155,11 @@ PhantomMiniWindow
     text-align: center
     color: #8c8c8cff
 
-  # The kit bar. Six ArenaKitSlot children are created here by arenahud.lua
-  # rather than written out six times, and a horizontalBox lays them out so the
-  # slot widths are the only number that has to add up: 6 slots of 24 plus 5
-  # gaps of 4 is 164, which is the 176 of a GameSidePanel less the 6 of margin
-  # each side. The layout expands a child's height to the row, so a slot is
-  # 24x36 and its 24 high icon plus 12 high key label fill it exactly.
-  #
-  # Always visible, because the deferred height measurement in refresh() reads
-  # the visible children and a row that appeared and vanished would move every
-  # dev button under it on every run. Empty is the idle look, not hidden.
-  UIWidget
-    id: kitRow
-    anchors.left: parent.left
-    anchors.right: parent.right
-    anchors.top: link.bottom
-    margin-left: 6
-    margin-right: 6
-    margin-top: 4
-    height: 36
-    focusable: false
-    layout:
-      type: horizontalBox
-      spacing: 4
-
   HorizontalSeparator
     id: sep1
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.top: kitRow.bottom
+    anchors.top: link.bottom
     margin-left: 6
     margin-right: 6
     margin-top: 5
