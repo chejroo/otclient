@@ -39,6 +39,16 @@ local SLOT_SEARCH_LIMIT = 30
 -- starts, which is the first bind after any non-bind verb.
 local taken = {}
 
+-- The flag written onto every mapping the arena creates, and the whole reason
+-- the bar does not silently fill up over an evening. Without it the second run
+-- would skip the six slots the first run wrote, because they are no longer free,
+-- and take six more; five runs would eat the thirty slots searched and the sixth
+-- would place nothing. It is written on the mapping entry rather than kept in
+-- memory so it survives a client restart or a crash mid run, which is exactly
+-- when leftovers would otherwise be stranded with nothing left that knows they
+-- are ours.
+local MARK = 'arenaKit'
+
 local bound = false
 
 local function attackNext()
@@ -117,6 +127,42 @@ local function firstFreeSlot(api, taken)
     return nil
 end
 
+-- Takes back every slot the arena wrote, and only those.
+--
+-- The test is the mark, not the contents, so a slot the player dragged their own
+-- thing into is left alone even if it sits where a kit entry used to, and a kit
+-- entry the player moved elsewhere is still recognised and removed. Idempotent
+-- on purpose: it runs both when a run ends and again when the next one starts,
+-- because the first of those does not happen if the client is closed mid run.
+local function sweepPreviousKit()
+    local api = modules.game_actionbar and modules.game_actionbar.ApiJson
+    local update = modules.game_actionbar and modules.game_actionbar.updateButton
+    if not api then
+        return 0
+    end
+
+    local removed = 0
+    for slot = 1, SLOT_SEARCH_LIMIT do
+        local existing = api.getMapping(ACTION_BAR, slot)
+        if existing and existing[MARK] then
+            api.removeAction(ACTION_BAR, slot)
+            local button = buttonAt(slot)
+            if button and update then
+                update(button)
+            end
+            removed = removed + 1
+        end
+    end
+
+    if removed > 0 then
+        if api.saveData then
+            api.saveData()
+        end
+        g_logger.info(string.format('arena kit: %d slot(s) handed back', removed))
+    end
+    return removed
+end
+
 -- Writes one kit entry into the first free slot.
 --
 -- Never overwriting is the whole point. A player who dragged the potion where
@@ -154,6 +200,15 @@ local function placeOnBar(taken, entry)
         api.createOrUpdateAction(ACTION_BAR, slot, entry.useType, entry.itemId, 0)
     else
         return false
+    end
+
+    -- Marked after the write, not before: createOrUpdateText and
+    -- createOrUpdateAction both replace `actionsetting` wholesale but leave the
+    -- rest of the entry alone, and the mark sits beside it rather than inside it
+    -- so nothing upstream reads it as part of an action.
+    local entry = api.getMapping(ACTION_BAR, slot)
+    if entry then
+        entry[MARK] = true
     end
 
     local button = buttonAt(slot)
@@ -203,14 +258,23 @@ local function onArenaKeys(protocol, opcode, buffer)
     end
 
     local verb = parts[2]
-    -- A clear leaves the bar alone. The kit items are gone from the inventory by
-    -- then and the slot simply greys out, which is the same thing that happens
-    -- to any item hotkey when the item runs out, and it means the player's
-    -- arrangement survives the end of a run. All it does here is forget which
-    -- slots this run claimed, so the next run looks at the bar fresh.
+    -- A clear hands the slots back. The kit items are gone from the inventory by
+    -- then, so leaving the entries would leave six greyed out buttons that do
+    -- nothing, and would also make the next run start its search past them.
+    -- Only slots the arena wrote are touched, so the player's own arrangement
+    -- comes back exactly as it was.
     if verb ~= 'bind' then
         taken = {}
+        pcall(sweepPreviousKit)
         return
+    end
+
+    -- First entry of a manifest, so this is a fresh run. Sweep again before
+    -- placing anything, because the clear above only runs if the client was
+    -- there to receive it: a crash or a quit mid run leaves the entries behind,
+    -- and this is where they get collected.
+    if next(taken) == nil then
+        pcall(sweepPreviousKit)
     end
 
     local key, kind, payload = parts[3], parts[4], parts[5]
