@@ -323,6 +323,14 @@ local function soundPath(snd)
     local path = string.format('/data/sounds/%d/%s', version, snd.file)
     local ok, exists = pcall(g_resources.fileExists, path)
     if not ok or not exists then
+        -- Said out loud once, and only once, because the flag is permanent for
+        -- the life of the process. A cue that resolves to nothing is silent
+        -- with nothing to distinguish it from a cue that simply has no sound,
+        -- and the whole reason this layer exists is that in-game sound was
+        -- broken for weeks without anyone being told.
+        g_logger.info(string.format(
+            'arena hud: no sound at %s (%s), that cue is off for this session',
+            path, ok and 'not present' or 'resources not ready'))
         snd.missing = true
         return nil
     end
@@ -467,7 +475,19 @@ local function refresh()
         end
 
         if bottom > top then
-            panel:setHeight(bottom - top + BOTTOM_PADDING)
+            local height = bottom - top + BOTTOM_PADDING
+            panel:setHeight(height)
+            -- And the field the main panel actually reads, which setHeight does
+            -- not touch. game_mainpanel's reloadMainPanelSizes walks every child
+            -- of the right panel and does `panel:setHeight(panel.panelHeight)`,
+            -- so leaving this at the OTUI's 382 meant every recalculation blew
+            -- the panel straight back up and reserved 382 px of column for it.
+            -- That happens on its own 50 ms after game start, which lands after
+            -- the deferred measurement here, and again on any options toggle or
+            -- mini window open. For a plain player the twelve hidden gamemaster
+            -- rows are about 300 px of that, so the symptom was a panel that
+            -- measured itself correctly once and then went back to mostly empty.
+            panel.panelHeight = height
         end
     end)
 
@@ -783,17 +803,22 @@ local function banner(text, color, hold)
     end
 end
 
-local function setIdle()
+-- Everything a finished run leaves running, taken down. Split out from setIdle
+-- because the two ways a run ends want different halves of it.
+--
+-- A run that ends between a telegraph's cast and its resolve would otherwise
+-- leave that shape tinted on the floor, and the clear for it is never coming,
+-- because the run it belonged to is over. Same for a combo bar draining towards
+-- a window whose kills can no longer be extended.
+local function stopRunEffects()
     lastTickAt = nil
-    running = false
-    -- Every way out of a run reaches here: the server's state push, the idle
-    -- timeout and onGameEnd. A run that ends between a telegraph's cast and its
-    -- resolve would otherwise leave that shape tinted on the floor, and the
-    -- clear for it is never coming, because the run it belonged to is over.
     clearAllTelegraphs()
-    -- Same reason as the telegraphs above: a run that ends mid chain leaves a
-    -- bar draining towards a window whose kills can no longer be extended.
     stopComboBar()
+end
+
+local function setIdle()
+    running = false
+    stopRunEffects()
 
     local ui = arenaHudController.ui
     if ui then
@@ -848,7 +873,13 @@ local function onArenaTick(protocol, opcode, buffer)
     local now = g_clock.millis()
     local gap = lastTickAt and (now - lastTickAt) or 0
     lastTickAt = now
-    if not running then
+    -- A probe is not a run, and this is the only place that decides. ArenaHud.push
+    -- sends opcode 170 for probe ticks too, so an unguarded `running = true`
+    -- here made the Stop button live for the whole of a 200 second probe, where
+    -- pressing it answers "You are not in a run." It also wiped a result banner
+    -- the player might still have been reading, because a probe's second tick
+    -- ran the reset below.
+    if not running and not probing then
         running = true
         -- Clears the previous match's result, which is deliberately held with no
         -- timeout. Cleared here rather than on run start because this is the
@@ -900,9 +931,24 @@ end
 -- result carries three, and forcing them into one pattern would mean padding
 -- every message to the longest one.
 local function onArenaMatch(protocol, opcode, buffer)
+    -- Split on the delimiter keeping empty fields. `gmatch('[^|]+')` needs at
+    -- least one character per field, so an empty one is not captured: it
+    -- vanishes and every field after it moves up an index, silently. Nothing
+    -- the server sends today can be empty, because ArenaHud.event tostrings its
+    -- arguments and Tibia names are never blank, so this was one nil argument
+    -- away from a result banner reading a plausible wrong score rather than an
+    -- obviously broken one. The other four handlers already use anchored
+    -- `([^|]*)` patterns and were never exposed to it.
     local parts = {}
-    for field in buffer:gmatch('[^|]+') do
-        parts[#parts + 1] = field
+    local from = 1
+    while true do
+        local at = buffer:find('|', from, true)
+        if not at then
+            parts[#parts + 1] = buffer:sub(from)
+            break
+        end
+        parts[#parts + 1] = buffer:sub(from, at - 1)
+        from = at + 1
     end
 
     if parts[1] ~= WIRE_VERSION then
@@ -919,8 +965,11 @@ local function onArenaMatch(protocol, opcode, buffer)
         banner(tr('%s...', parts[3] or ''), COLOR_BANNER, BANNER_MS)
         playCue('countdown')
     elseif verb == 'start' then
-        -- Held rather than timed out, because this is the sync mark every
-        -- recording is cut against and a frame of it has to survive.
+        -- Timed out like the rest, not held. The comment here used to claim it
+        -- was held because this is the sync mark every recording is cut
+        -- against, which was never what the code did. Two seconds at 60 fps is
+        -- 120 frames of it, so the sync mark is in no danger; holding it would
+        -- instead mean HUNT sitting over the first minute of the run.
         banner(tr('HUNT  vs %s', parts[3] or '?'), COLOR_BANNER_WIN, BANNER_MS)
         playCue('start')
     elseif verb == 'phase' then
@@ -986,10 +1035,23 @@ local function onArenaState(protocol, opcode, buffer)
         return
     end
 
+    local wasRunning = running
     running = isRunning == '1'
     probing = isProbing == '1'
     privileged = isPrivileged == '1'
-    if not running then
+
+    -- The server's state push is the normal end of a run, and it used to be the
+    -- one way out that took none of the run's effects down with it: a telegraph
+    -- armed at the bell stayed tinted on the floor until its own grace timer
+    -- expired, and the combo bar kept draining for another window. setIdle does
+    -- this too, but setIdle is not on this path and must not be, because it
+    -- resets the score row and the summary that arrives one message earlier is
+    -- what puts the final score there. So only the effects come down here; the
+    -- labels keep the run's last values, which for a finished run is what they
+    -- should read anyway.
+    if wasRunning and not running then
+        stopRunEffects()
+    elseif not running then
         lastTickAt = nil
     end
     refresh()
@@ -1070,6 +1132,16 @@ end
 function arenaHudController:onGameEnd()
     probing = false
     privileged = false
+    -- The banner and its flag, which setIdle does not touch. A result line is
+    -- deliberately held with no timeout, and the panel is never destroyed on
+    -- game end: Controller:setUI runs at file scope, so dataUI.onGameStart is
+    -- false and destroyUI never fires. Without this, finishing a race, logging
+    -- out and logging back in left YOU WIN 4,200 - 3,900 sitting on the panel
+    -- for the whole of the next session, until the next run's first tick
+    -- happened to clear it. It also cancels a banner timer that would otherwise
+    -- outlive the game.
+    banner('')
+    resultHeld = false
     setIdle()
     if arenaButton then
         arenaButton:destroy()
