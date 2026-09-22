@@ -1,0 +1,85 @@
+-- The challenge prompt, opcode 178. Somebody has asked this player to a race.
+--
+-- Its own window rather than another shape of the session window, for the same
+-- reason it has its own opcode: a challenge arrives when the player has no
+-- session, and the session window is what tells them about one they are in.
+-- Sharing the widget would mean a challenge could paint over a results screen,
+-- which is the one moment the server promises it cannot happen and the client
+-- would then be the thing that broke it.
+--
+-- Fixed height and no scroll panel, because the content is two lines of known
+-- shape: who is asking, and how long is left. Nothing here comes off the wire
+-- at unpromised length the way the prep window's rules do.
+
+-- auto-focus: none for the reason spelled out in arenasession.otui: walk keys
+-- are bound to game_interface's root panel and a g_keyboard binding only fires
+-- while that subtree holds focus. Taking focus here would stop the player
+-- walking, and a challenge arrives while they are doing exactly that, standing
+-- in town with nothing else going on.
+MainWindow
+  id: arenaChallengeWindow
+  !text: tr('Challenge')
+  size: 280 150
+  visible: false
+  auto-focus: none
+  @onEscape: modules.game_arenahud.onChallengeDecline()
+
+  Label
+    id: headline
+    !text: ''
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-top: 10
+    height: 36
+    text-align: center
+    text-wrap: true
+    text-auto-resize: true
+    color: #ffffffff
+    font: verdana-11px-rounded
+
+  Label
+    id: deadline
+    !text: ''
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: headline.bottom
+    margin-top: 6
+    height: 14
+    text-align: center
+    color: #e0a33cff
+    font: verdana-11px-rounded
+
+  Label
+    id: note
+    !text: tr('One seed, one clock, two identical arenas.')
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: deadline.bottom
+    margin-top: 6
+    margin-left: 6
+    margin-right: 6
+    height: 26
+    text-align: center
+    text-wrap: true
+    text-auto-resize: true
+    color: #808080ff
+    font: verdana-11px-rounded
+
+  Button
+    id: accept
+    !text: tr('Accept')
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.bottom: parent.bottom
+    margin-right: 3
+    @onClick: modules.game_arenahud.onChallengeAccept()
+
+  Button
+    id: decline
+    !text: tr('Decline')
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    margin-left: 3
+    @onClick: modules.game_arenahud.onChallengeDecline()

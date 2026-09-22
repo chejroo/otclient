@@ -15,6 +15,10 @@ local OPCODE_KILL = 175
 -- rather than pipes, because it is nested and arrives a handful of times per
 -- run rather than once a second.
 local OPCODE_SESSION = 177
+-- The challenge prompt, its own id rather than another `kind` on 177 because it
+-- arrives when the player has no session at all. Reasoning in full in
+-- ArenaConfig.hud.opcodeChallenge on the server.
+local OPCODE_CHALLENGE = 178
 -- v5 added the cast's source to opcode 174, so a telegraph can be drawn in the
 -- colour of whoever cast it, and claimed opcode 176 for the arena key manifest.
 -- v4 added the opponent's score and combo to the tick. It is not the v3 that
@@ -55,6 +59,12 @@ local leaveArmedUntil = 0
 -- long before the session block that owns them.
 local sessionWindow
 local sessionKind
+
+-- The challenge prompt's window and the wall clock time it stops being worth
+-- offering. Hoisted beside the session's for the same reason: the 1 Hz ticker
+-- near the bottom of this file redraws both.
+local challengeWindow
+local challengeUntil
 
 -- What the one button says, by phase. Untranslated here and passed through tr()
 -- at the point of use, because this table is built at file load and the
@@ -1406,6 +1416,89 @@ local function onArenaSession(protocol, opcode, data)
     end
 end
 
+
+-- The challenge prompt, opcode 178. Somebody has asked this player to a race
+-- and the answer is one of two buttons.
+--
+-- The server sends the same challenge as game text as well, so this window is a
+-- convenience rather than the mechanism. A player on the official client, or on
+-- this one with the module unloaded, still gets the sentence and can still type
+-- `/accept`.
+local function ensureChallengeWindow()
+    if challengeWindow then
+        return challengeWindow
+    end
+    challengeWindow = g_ui.displayUI('arenachallenge')
+    challengeWindow:hide()
+    return challengeWindow
+end
+
+local function hideChallenge()
+    challengeUntil = nil
+    if challengeWindow then
+        challengeWindow:hide()
+    end
+end
+
+-- Counted down locally and closed here at zero, rather than waiting to be told.
+-- The server's expiry is lazy: it fires when somebody reads the challenge, so
+-- nothing on the server is scheduled to tell this client the moment it lapses.
+-- A window still offering an Accept the server would refuse is worse than one
+-- that closes a second early, because the refusal arrives as a cancel message
+-- the player has no reason to expect.
+local function refreshChallengeDeadline()
+    if not challengeWindow or not challengeUntil then
+        return
+    end
+    local left = math.max(0, math.floor((challengeUntil - g_clock.millis()) / 1000))
+    if left <= 0 then
+        hideChallenge()
+        return
+    end
+    challengeWindow.deadline:setText(tr('%d s to answer', left))
+end
+
+local function showChallenge(data)
+    local window = ensureChallengeWindow()
+    local from = data.from or '?'
+    window.headline:setText(tr('%s challenges you to a race.', from))
+    challengeUntil = g_clock.millis() + (tonumber(data.seconds) or 60) * 1000
+    refreshChallengeDeadline()
+    window:show()
+    window:raise()
+end
+
+local function onArenaChallenge(protocol, opcode, data)
+    if type(data) ~= 'table' or tonumber(data.v) ~= tonumber(WIRE_VERSION:match('%d+')) then
+        return
+    end
+
+    if data.kind == 'challenge' then
+        showChallenge(data)
+    elseif data.kind == 'challengeClosed' then
+        hideChallenge()
+        if data.text and data.text ~= '' then
+            banner(data.text, COLOR_BANNER_WIN)
+        end
+    end
+end
+
+-- Both buttons hide the window before the server answers. The server closes it
+-- too, on every path, and this is deliberately not left to that: the round trip
+-- is a few milliseconds on loopback and was measured at p99 13 ms in spike 4,
+-- but a button that stays lit after a click reads as a click that did not
+-- register, and the second click is the one that sends a verb into a challenge
+-- that is already gone.
+function onChallengeAccept()
+    hideChallenge()
+    send('accept')
+end
+
+function onChallengeDecline()
+    hideChallenge()
+    send('decline')
+end
+
 -- Called from the .otui. They are on the module table rather than local because
 -- an @onClick in a style is resolved against the module, not against this file's
 -- upvalues.
@@ -1495,6 +1588,8 @@ function arenaHudController:onInit()
     -- handler above it is lost with it.
     pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_SESSION)
     ProtocolGame.registerExtendedJSONOpcode(OPCODE_SESSION, onArenaSession)
+    pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_CHALLENGE)
+    ProtocolGame.registerExtendedJSONOpcode(OPCODE_CHALLENGE, onArenaChallenge)
 
     local ui = self.ui
     if ui then
@@ -1552,6 +1647,7 @@ function arenaHudController:onGameStart()
         -- on them; this is the number on screen, and one packet a second per
         -- player to redraw a label is not worth the inbound budget.
         refreshSessionDeadline()
+        refreshChallengeDeadline()
     end, 1000, 'arenaHudIdleCheck')
 end
 
@@ -1574,7 +1670,13 @@ function arenaHudController:onTerminate()
         sessionWindow = nil
     end
     sessionKind = nil
+    if challengeWindow then
+        challengeWindow:destroy()
+        challengeWindow = nil
+    end
+    challengeUntil = nil
     pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_SESSION)
+    pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_CHALLENGE)
 end
 
 function arenaHudController:onGameEnd()
@@ -1586,6 +1688,10 @@ function arenaHudController:onGameEnd()
     -- left open across a relog would offer Play again on a session that no
     -- longer exists.
     hideSession()
+    -- Same reason as the session window: the challenge lives in a table on the
+    -- server that dies with the connection, so a prompt left open across a
+    -- relog offers an Accept for a challenge nobody is making.
+    hideChallenge()
     -- The banner and its flag, which setIdle does not touch. A result line is
     -- deliberately held with no timeout, and the panel is never destroyed on
     -- game end: Controller:setUI runs at file scope, so dataUI.onGameStart is
