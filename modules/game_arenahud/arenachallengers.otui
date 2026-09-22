@@ -1,0 +1,110 @@
+// The challenge picker, opened by the panel's Challenge button.
+//
+// A list rather than only a text field, because Tibia names carry spaces and
+// capitals and a typo answers "X is not online", which reads as the other
+// player having logged out rather than as a misspelling. The field stays for
+// somebody who knows exactly who they want and does not want to hunt a row.
+//
+// Rows are built in Lua. The list comes off the wire and is as long as the
+// server is busy, so declaring a fixed number of labels here would truncate
+// silently on the day a third tester joins.
+
+ChallengeRow < Button
+  height: 20
+  text-align: left
+  text-offset: 6 2
+  margin-left: 2
+  margin-top: 2
+
+// auto-focus: none everywhere else in this module, and deliberately NOT here.
+// This window owns a text field, and a field that cannot take focus cannot be
+// typed into. The cost is the one the other windows avoid: while this is
+// focused the walk keys do not fire, which is acceptable because the player
+// opened it on purpose and closes it with Escape or a click.
+MainWindow
+  id: arenaChallengersWindow
+  !text: tr('Challenge a player')
+  size: 300 360
+  visible: false
+  @onEscape: modules.game_arenahud.onChallengersClose()
+
+  Label
+    id: hint
+    !text: tr('Pick a player, or type a name.')
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-top: 2
+    height: 16
+    text-align: center
+    color: #808080ff
+    font: verdana-11px-rounded
+
+  TextEdit
+    id: nameField
+    anchors.left: parent.left
+    anchors.right: sendButton.left
+    anchors.top: hint.bottom
+    margin-top: 4
+    margin-right: 3
+    height: 20
+
+  Button
+    id: sendButton
+    !text: tr('Challenge')
+    width: 90
+    anchors.right: parent.right
+    anchors.top: hint.bottom
+    margin-top: 4
+    @onClick: modules.game_arenahud.onChallengersSend()
+
+  HorizontalSeparator
+    id: sep
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: nameField.bottom
+    margin-top: 6
+
+  VerticalScrollBar
+    id: listScroll
+    anchors.top: list.top
+    anchors.bottom: list.bottom
+    anchors.right: parent.right
+    step: 14
+    pixels-scroll: true
+
+  // Anchored top to bottom with no fit-children, for the reason spelled out at
+  // length in arenasession.otui: the anchor layout and the box layout both want
+  // to own the height and neither has a guard, so the pair ping-pongs every
+  // frame and the scroll range collapses to zero.
+  ScrollablePanel
+    id: list
+    anchors.left: parent.left
+    anchors.right: listScroll.left
+    anchors.top: sep.bottom
+    anchors.bottom: refreshButton.top
+    margin-top: 6
+    margin-bottom: 8
+    margin-left: 4
+    margin-right: 2
+    vertical-scrollbar: listScroll
+    layout:
+      type: verticalBox
+
+  Button
+    id: refreshButton
+    !text: tr('Refresh')
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.bottom: parent.bottom
+    margin-right: 3
+    @onClick: modules.game_arenahud.onChallengersRefresh()
+
+  Button
+    id: closeButton
+    !text: tr('Close')
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    margin-left: 3
+    @onClick: modules.game_arenahud.onChallengersClose()

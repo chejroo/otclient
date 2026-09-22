@@ -155,11 +155,28 @@ PhantomMiniWindow
     text-align: center
     color: #8c8c8cff
 
+  // The player's own verb, so it sits above the separator that starts the
+  // gamemaster block and is not in DEV_ONLY. It opens a picker rather than
+  // sending a verb directly, because a challenge needs a name and the other
+  // buttons here do not.
+  //
+  // Declared before sep1 because sep1 anchors to its bottom, and an anchor to a
+  // widget the parser has not reached yet does not resolve.
+  ArenaButton
+    id: challengeButton
+    !text: 'Challenge a player'
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: link.bottom
+    margin-left: 6
+    margin-right: 6
+    margin-top: 5
+
   HorizontalSeparator
     id: sep1
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.top: link.bottom
+    anchors.top: challengeButton.bottom
     margin-left: 6
     margin-right: 6
     margin-top: 5

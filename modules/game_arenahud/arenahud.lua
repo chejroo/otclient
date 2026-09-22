@@ -1475,6 +1475,8 @@ local function onArenaChallenge(protocol, opcode, data)
 
     if data.kind == 'challenge' then
         showChallenge(data)
+    elseif data.kind == 'challengeable' then
+        fillChallengers(data)
     elseif data.kind == 'challengeClosed' then
         hideChallenge()
         if data.text and data.text ~= '' then
@@ -1497,6 +1499,98 @@ end
 function onChallengeDecline()
     hideChallenge()
     send('decline')
+end
+
+
+-- The challenge picker. Opened by the panel's Challenge button, filled by the
+-- server's answer to the `who` verb on opcode 178.
+--
+-- The list is the server's, not the client's, because the client knows only who
+-- is on its own screen and the point of a challenge is reaching somebody
+-- standing elsewhere in the town. It is also the only side that knows who is
+-- already in a session.
+local challengersWindow
+
+local function ensureChallengersWindow()
+    if challengersWindow then
+        return challengersWindow
+    end
+    challengersWindow = g_ui.displayUI('arenachallengers')
+    challengersWindow:hide()
+    return challengersWindow
+end
+
+local function sendChallenge(name)
+    if not name or name == '' then
+        return
+    end
+    -- Names carry spaces and never a pipe, and the server splits on pipes, so
+    -- the name travels whole as the verb's argument.
+    arenaHudController:sendExtendedOpcode(OPCODE_CONTROL, WIRE_VERSION .. '|challenge|' .. name)
+    if challengersWindow then
+        challengersWindow:hide()
+    end
+end
+
+local function fillChallengers(data)
+    local window = ensureChallengersWindow()
+    window.list:destroyChildren()
+
+    local names = data.names or {}
+    if #names == 0 then
+        local row = g_ui.createWidget('ChallengeRow', window.list)
+        -- Says which kind of empty it is. "Nobody" and "a race is already
+        -- running" are different problems and the fix for each is different.
+        if tonumber(data.live) == 1 then
+            row:setText(tr('A race is already running.'))
+        else
+            row:setText(tr('Nobody else is free right now.'))
+        end
+        row:setEnabled(false)
+        return
+    end
+
+    for _, name in ipairs(names) do
+        local row = g_ui.createWidget('ChallengeRow', window.list)
+        row:setText(name)
+        row.onClick = function()
+            sendChallenge(name)
+        end
+    end
+end
+
+local function askWho()
+    arenaHudController:sendExtendedOpcode(OPCODE_CONTROL, WIRE_VERSION .. '|who')
+end
+
+function onChallengersOpen()
+    local window = ensureChallengersWindow()
+    window.nameField:setText('')
+    window.list:destroyChildren()
+    window:show()
+    window:raise()
+    window:focus()
+    -- Asked every time it opens rather than cached. Who is free changes with
+    -- every run that starts or ends anywhere on the server, so a remembered
+    -- list is wrong more often than it is right.
+    askWho()
+end
+
+function onChallengersRefresh()
+    askWho()
+end
+
+function onChallengersClose()
+    if challengersWindow then
+        challengersWindow:hide()
+    end
+end
+
+function onChallengersSend()
+    if not challengersWindow then
+        return
+    end
+    sendChallenge(challengersWindow.nameField:getText())
 end
 
 -- Called from the .otui. They are on the module table rather than local because
@@ -1601,6 +1695,11 @@ function arenaHudController:onInit()
                 end
             end
         end
+        -- Not in VERBS, because it does not send a verb: a challenge needs a
+        -- name, so the button opens the picker that collects one.
+        if ui.challengeButton then
+            ui.challengeButton.onClick = onChallengersOpen
+        end
     end
 
     setIdle()
@@ -1675,6 +1774,10 @@ function arenaHudController:onTerminate()
         challengeWindow = nil
     end
     challengeUntil = nil
+    if challengersWindow then
+        challengersWindow:destroy()
+        challengersWindow = nil
+    end
     pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_SESSION)
     pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_CHALLENGE)
 end
@@ -1692,6 +1795,7 @@ function arenaHudController:onGameEnd()
     -- server that dies with the connection, so a prompt left open across a
     -- relog offers an Accept for a challenge nobody is making.
     hideChallenge()
+    onChallengersClose()
     -- The banner and its flag, which setIdle does not touch. A result line is
     -- deliberately held with no timeout, and the panel is never destroyed on
     -- game end: Controller:setUI runs at file scope, so dataUI.onGameStart is

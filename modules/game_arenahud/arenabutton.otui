@@ -1,16 +1,16 @@
--- Style only. It lives in its own file because a .otui loaded with loadUI may
--- contain exactly one main widget, and a style definition counts as one.
---
--- The disabled state follows what every other disabled button in the client
--- already does: fade the image through the alpha channel of image-color, and
--- leave the text at full colour. See NextButton (#dfdfdf88), TabButton
--- (#dfdfdf66) and AddButton (#dfdfdf55) in data/styles/10-buttons.otui.
---
--- Stock Button is the odd one out. It sets opacity 0.8 on the whole widget plus
--- color #dfdfdf88, so the label fades too and the button reads as transparent
--- rather than as unavailable. Tinting the face with a solid colour instead does
--- not work either: buttons.png is already very dark, so any multiply below
--- about #c0c0c0 drives it to black.
+// Style only. It lives in its own file because a .otui loaded with loadUI may
+// contain exactly one main widget, and a style definition counts as one.
+//
+// The disabled state follows what every other disabled button in the client
+// already does: fade the image through the alpha channel of image-color, and
+// leave the text at full colour. See NextButton (#dfdfdf88), TabButton
+// (#dfdfdf66) and AddButton (#dfdfdf55) in data/styles/10-buttons.otui.
+//
+// Stock Button is the odd one out. It sets opacity 0.8 on the whole widget plus
+// color #dfdfdf88, so the label fades too and the button reads as transparent
+// rather than as unavailable. Tinting the face with a solid colour instead does
+// not work either: buttons.png is already very dark, so any multiply below
+// about #c0c0c0 drives it to black.
 ArenaButton < Button
   height: 20
   color: #ffffffff
