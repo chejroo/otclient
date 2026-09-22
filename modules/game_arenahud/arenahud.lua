@@ -1318,8 +1318,16 @@ function onSessionEscape()
 end
 
 -- The main panel button has one job per state, so there is always exactly one
--- obvious thing to press. Leaving a run needs a second click within a few
--- seconds, because a misclick there is a forfeit with four minutes left on it.
+-- obvious thing to press.
+--
+-- Leaving a run needs a second click inside this window, because a misclick
+-- there is a forfeit with four minutes left on the clock. The number lives here
+-- and not in `ArenaConfig.session`, because the confirmation is a client side
+-- gesture: the server only ever sees the second press, as a `leave` verb, so a
+-- copy on the server would be a number nothing reads and it would go stale
+-- silently. `inputGuardMs` is the opposite case and does travel, in the results
+-- payload, because the server decides when a result may be dismissed.
+local LEAVE_CONFIRM_MS = 3000
 local leaveArmedUntil = 0
 
 local function onArenaButton()
@@ -1328,7 +1336,7 @@ local function onArenaButton()
             leaveArmedUntil = 0
             send('leave')
         else
-            leaveArmedUntil = g_clock.millis() + 3000
+            leaveArmedUntil = g_clock.millis() + LEAVE_CONFIRM_MS
             modules.game_textmessage.displayGameMessage(tr('Click again to leave the run. It counts as a forfeit.'))
         end
         return
