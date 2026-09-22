@@ -28,6 +28,21 @@ SessionHeading < Label
   margin-top: 6
   margin-left: 2
 
+-- The champion picker. A Button rather than a styled Label, because Button
+-- already carries the $on state that draws it pressed, which is the whole of
+-- "this is the one you have chosen", and because a thing you click should look
+-- like a thing you click.
+--
+-- Rows are only drawn when the roster holds more than one champion. With one
+-- card a picker is a button whose only effect is to confirm what is already
+-- true.
+SessionPick < Button
+  height: 20
+  text-align: left
+  text-offset: 6 2
+  margin-left: 2
+  margin-top: 2
+
 -- auto-focus: none, and it is not cosmetic. Walk keys are bound to
 -- game_interface's root panel, and a g_keyboard binding only fires while that
 -- widget's subtree holds focus. UIWindow.create sets AutoFocusFirst, so showing

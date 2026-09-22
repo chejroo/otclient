@@ -1238,6 +1238,33 @@ local function showPrep(data)
     window.headline:setText(data.again and tr('Another run') or tr('Get ready'))
     sessionDeadline = g_clock.millis() + (data.deadline or 0) * 1000
 
+    -- The picker, above the rules, because choosing is the thing this window
+    -- asks the player to do and reading is what they do while deciding. Drawn
+    -- only when there is a choice: with one champion in the roster a card is a
+    -- button that confirms what is already true.
+    local roster = data.roster or {}
+    local mineId
+    for _, who in ipairs(data.players or {}) do
+        if who.you then
+            mineId = who.champion
+        end
+    end
+    if #roster > 1 then
+        sessionRow('SessionHeading', tr('Champion'))
+        for _, entry in ipairs(roster) do
+            local card = sessionRow('SessionPick', entry.name)
+            if card then
+                card:setOn(entry.id == mineId)
+                card.onClick = function()
+                    -- Sent even when it is already selected. The server drops a
+                    -- pick that changes nothing, and one rule on the server is
+                    -- better than the same rule in two places.
+                    send('pick|' .. entry.id)
+                end
+            end
+        end
+    end
+
     sessionRow('SessionHeading', tr('The rules'))
     for _, line in ipairs(data.conditions or {}) do
         sessionRow('SessionRow', line)
@@ -1248,13 +1275,10 @@ local function showPrep(data)
     -- first twenty seconds of Warmup is time lost for a reason that has nothing
     -- to do with skill, and it inflates the expert to novice ratio the exit
     -- test reads.
-    local roster = data.roster or {}
     local mine = roster[1]
     for _, entry in ipairs(roster) do
-        for _, who in ipairs(data.players or {}) do
-            if who.you and who.champion == entry.id then
-                mine = entry
-            end
+        if entry.id == mineId then
+            mine = entry
         end
     end
     if mine then
