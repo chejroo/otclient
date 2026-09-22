@@ -22,7 +22,10 @@
 -- which is the intended failure: a slot holding the wrong thing is worse than
 -- an empty one.
 local OPCODE_KEYS = 176
-local WIRE_VERSION = 'v5'
+-- v6 with the session loop. The manifest itself did not change shape: the
+-- version is shared by every arena opcode so that one token check covers the
+-- whole HUD, and the bump is opcode 172's.
+local WIRE_VERSION = 'v6'
 
 local BINDING = 'Space'
 

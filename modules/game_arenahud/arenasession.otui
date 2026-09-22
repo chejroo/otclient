@@ -1,0 +1,101 @@
+-- The prep and results window, opcode 177. One window for both, because they
+-- are the same shape: a title, a deadline, a list of rows and two buttons. Two
+-- windows would be two layouts to keep in step for one difference in wording.
+--
+-- Rows are created in Lua rather than declared here. The conditions strip, the
+-- key legend and the player list are all variable length and all come off the
+-- wire, so declaring them would mean a fixed number of hidden labels and a
+-- silent truncation the day a champion gains a seventh key.
+
+SessionRow < Label
+  height: 14
+  text-align: left
+  color: #c0c0c0ff
+  font: verdana-11px-rounded
+  margin-left: 2
+
+SessionHeading < Label
+  height: 16
+  text-align: left
+  color: #e0a33cff
+  font: verdana-11px-rounded
+  margin-top: 6
+  margin-left: 2
+
+MainWindow
+  id: arenaSessionWindow
+  !text: tr('Arena')
+  size: 320 400
+  visible: false
+  @onEscape: modules.game_arenahud.onSessionEscape()
+
+  Label
+    id: headline
+    !text: ''
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    margin-top: 2
+    height: 18
+    text-align: center
+    color: #ffffffff
+    font: verdana-11px-rounded
+
+  Label
+    id: deadline
+    !text: ''
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: headline.bottom
+    height: 14
+    text-align: center
+    color: #808080ff
+    font: verdana-11px-rounded
+
+  HorizontalSeparator
+    id: sep
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: deadline.bottom
+    margin-top: 4
+
+  ScrollablePanel
+    id: body
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: sep.bottom
+    anchors.bottom: primary.top
+    margin-top: 6
+    margin-bottom: 8
+    margin-left: 4
+    margin-right: 4
+    vertical-scrollbar: bodyScroll
+    layout:
+      type: verticalBox
+      fit-children: true
+
+  VerticalScrollBar
+    id: bodyScroll
+    anchors.top: body.top
+    anchors.bottom: body.bottom
+    anchors.right: parent.right
+    step: 14
+    pixels-scroll: true
+
+  Button
+    id: primary
+    !text: tr('Ready')
+    anchors.left: parent.left
+    anchors.right: parent.horizontalCenter
+    anchors.bottom: parent.bottom
+    margin-right: 3
+    @onClick: modules.game_arenahud.onSessionPrimary()
+
+  Button
+    id: secondary
+    !text: tr('Leave')
+    anchors.left: parent.horizontalCenter
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    margin-left: 3
+    @onClick: modules.game_arenahud.onSessionSecondary()

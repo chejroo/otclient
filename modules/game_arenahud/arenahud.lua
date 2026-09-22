@@ -11,6 +11,10 @@ local OPCODE_MATCH = 173
 local OPCODE_TELEGRAPH = 174
 -- One scoring kill: where, what it was worth, and where the chain stands.
 local OPCODE_KILL = 175
+-- The session screen: prep, the ready rows, results and the close banner. JSON
+-- rather than pipes, because it is nested and arrives a handful of times per
+-- run rather than once a second.
+local OPCODE_SESSION = 177
 -- v5 added the cast's source to opcode 174, so a telegraph can be drawn in the
 -- colour of whoever cast it, and claimed opcode 176 for the arena key manifest.
 -- v4 added the opponent's score and combo to the tick. It is not the v3 that
@@ -19,7 +23,17 @@ local OPCODE_KILL = 175
 -- so two extra fields under v3 would have printed 'Frenzy|4200|3' as the phase
 -- instead of being ignored. That is exactly the mis-parse the token exists to
 -- prevent, so the race got its own number.
-local WIRE_VERSION = 'v5'
+--
+-- v6 is the session loop. What spends it is opcode 172: its first field was a
+-- 0 or 1 `running` flag and is now a phase name, so a v5 client reading a v6
+-- server would compare 'prep' against '1', decide no run was live, and grey out
+-- the panel on a run that is about to start.
+local WIRE_VERSION = 'v6'
+
+-- The server's view of where this player is in the loop: idle, prep, countdown,
+-- run or results. `running` is kept as its own boolean because a dozen call
+-- sites read it, and it is now exactly `phase == 'run'`.
+local phaseNow = 'idle'
 
 -- No tick for this long means the run is over, or the server stopped talking.
 -- The ticks only exist during a run, so they already carry that fact; the server
@@ -1029,14 +1043,15 @@ local function onArenaMatch(protocol, opcode, buffer)
 end
 
 local function onArenaState(protocol, opcode, buffer)
-    local version, isRunning, isProbing, isPrivileged =
+    local version, phase, isProbing, isPrivileged =
         buffer:match('^([^|]*)|([^|]*)|([^|]*)|([^|]*)$')
     if version ~= WIRE_VERSION then
         return
     end
 
     local wasRunning = running
-    running = isRunning == '1'
+    phaseNow = phase
+    running = phase == 'run'
     probing = isProbing == '1'
     privileged = isPrivileged == '1'
 
@@ -1054,15 +1069,282 @@ local function onArenaState(protocol, opcode, buffer)
     elseif not running then
         lastTickAt = nil
     end
-    refresh()
+
+    -- `idle` is the one phase that resets the labels, and it is new in v6. The
+    -- panel used to say IDLE while the clock, the phase and the rival's score
+    -- kept whatever the last tick of the previous run left behind, which reads
+    -- as a run that is still going and is not.
+    --
+    -- Safe to do here and it was not before, because a results screen now
+    -- carries the final score, so clearing the score row no longer throws away
+    -- the one place it existed.
+    if phase == 'idle' then
+        setIdle()
+    else
+        refresh()
+    end
 end
 
 local function send(verb)
     arenaHudController:sendExtendedOpcode(OPCODE_CONTROL, WIRE_VERSION .. '|' .. verb)
 end
 
+-- The session window, opcode 177. One window for prep and for results, because
+-- they are the same shape and the difference is wording.
+local sessionWindow
+local sessionKind
+local sessionDeadline
+local sessionGuardUntil = 0
+
+local function sessionRow(style, text, color)
+    if not sessionWindow then
+        return
+    end
+    local row = g_ui.createWidget(style, sessionWindow.body)
+    row:setText(text)
+    if color then
+        row:setColor(color)
+    end
+    return row
+end
+
+local function clearSessionBody()
+    if sessionWindow then
+        sessionWindow.body:destroyChildren()
+    end
+end
+
+local function ensureSessionWindow()
+    if sessionWindow then
+        return sessionWindow
+    end
+    sessionWindow = g_ui.displayUI('arenasession')
+    sessionWindow:hide()
+    return sessionWindow
+end
+
+local function hideSession()
+    sessionKind = nil
+    sessionDeadline = nil
+    if sessionWindow then
+        clearSessionBody()
+        sessionWindow:hide()
+    end
+end
+
+local function refreshSessionDeadline()
+    if not sessionWindow or not sessionDeadline then
+        return
+    end
+    local left = math.max(0, math.floor((sessionDeadline - g_clock.millis()) / 1000))
+    if sessionKind == 'prep' then
+        sessionWindow.deadline:setText(tr('Starting in %d s unless everyone is ready', left))
+    else
+        sessionWindow.deadline:setText(tr('Leaving in %d s', left))
+    end
+
+    -- The results buttons are inert for a moment after the bell, so a player
+    -- mashing a key cannot skip their own result. The score has been dark for
+    -- the last sixty seconds, so this window is the reveal.
+    local guarded = g_clock.millis() < sessionGuardUntil
+    sessionWindow.primary:setEnabled(not guarded)
+    sessionWindow.secondary:setEnabled(not guarded)
+end
+
+local function showPrep(data)
+    local window = ensureSessionWindow()
+    sessionKind = 'prep'
+    sessionGuardUntil = 0
+    clearSessionBody()
+
+    window.headline:setText(data.again and tr('Another run') or tr('Get ready'))
+    sessionDeadline = g_clock.millis() + (data.deadline or 0) * 1000
+
+    sessionRow('SessionHeading', tr('The rules'))
+    for _, line in ipairs(data.conditions or {}) do
+        sessionRow('SessionRow', line)
+    end
+
+    -- The key legend, which nothing on screen has ever shown: arenakeys.lua
+    -- sends the labels to the log only. A novice finding their keys in the
+    -- first twenty seconds of Warmup is time lost for a reason that has nothing
+    -- to do with skill, and it inflates the expert to novice ratio the exit
+    -- test reads.
+    local roster = data.roster or {}
+    local mine = roster[1]
+    for _, entry in ipairs(roster) do
+        for _, who in ipairs(data.players or {}) do
+            if who.you and who.champion == entry.id then
+                mine = entry
+            end
+        end
+    end
+    if mine then
+        sessionRow('SessionHeading', tr('%s, on your action bar', mine.name))
+        for _, key in ipairs(mine.keys or {}) do
+            sessionRow('SessionRow', string.format('%s   %s', key.key, key.label))
+        end
+    end
+
+    if #(data.players or {}) > 1 then
+        sessionRow('SessionHeading', tr('Racing'))
+        for _, who in ipairs(data.players) do
+            sessionRow('SessionRow',
+                string.format('%s   %s', who.name, who.ready and tr('ready') or tr('choosing')),
+                who.ready and COLOR_RUNNING or COLOR_IDLE)
+        end
+    end
+
+    window.primary:setText(tr('Ready'))
+    window.secondary:setText(tr('Leave'))
+    refreshSessionDeadline()
+    window:show()
+    window:raise()
+    window:focus()
+end
+
+-- Only the ready marks and the clock change, so the body is left alone rather
+-- than rebuilt: rebuilding it would scroll a player who is reading the rules
+-- back to the top every time the other one picks a champion.
+local function updatePlayers(data)
+    if sessionKind ~= 'prep' or not sessionWindow then
+        return
+    end
+    sessionDeadline = g_clock.millis() + (data.deadline or 0) * 1000
+    for _, child in ipairs(sessionWindow.body:getChildren()) do
+        for _, who in ipairs(data.players or {}) do
+            if child:getText():find(who.name, 1, true) == 1 then
+                child:setText(string.format('%s   %s', who.name, who.ready and tr('ready') or tr('choosing')))
+                child:setColor(who.ready and COLOR_RUNNING or COLOR_IDLE)
+            end
+        end
+    end
+    refreshSessionDeadline()
+end
+
+local OUTCOME_TEXT = {
+    solo = 'Run over',
+    win = 'You win',
+    loss = 'You lose',
+    draw = 'Draw',
+    forfeit = 'Forfeit',
+}
+
+local function showResults(data)
+    local window = ensureSessionWindow()
+    sessionKind = 'results'
+    clearSessionBody()
+
+    window.headline:setText(tr(OUTCOME_TEXT[data.outcome] or 'Run over'))
+    sessionDeadline = g_clock.millis() + (data.hold or 0) * 1000
+    sessionGuardUntil = g_clock.millis() + (data.guardMs or 0)
+
+    for _, who in ipairs(data.players or {}) do
+        sessionRow('SessionHeading', who.you and tr('You') or who.name)
+        sessionRow('SessionRow', tr('Score   %s', groupDigits(who.score or 0)),
+            who.you and COLOR_RUNNING or COLOR_IDLE)
+        sessionRow('SessionRow', tr('Kills   %d', who.kills or 0))
+        sessionRow('SessionRow', tr('Best chain   %d, average %.2f', who.bestCombo or 0, (who.avgCombo100 or 0) / 100))
+        -- The telegraph line is the one brief section 4 makes the top skill
+        -- axis, so it is spelled out as a rate rather than as two counts a
+        -- player has to divide in their head.
+        local warned = who.warned or 0
+        if warned > 0 then
+            sessionRow('SessionRow', tr('Dodged   %d of %d, %d%%', who.dodged or 0, warned,
+                math.floor((who.dodged or 0) / warned * 100)))
+        end
+        sessionRow('SessionRow', tr('Went down   %d times', who.deaths or 0))
+        sessionRow('SessionRow', tr('Potions left   %d', who.potionsLeft or 0))
+        if who.personalBest then
+            sessionRow('SessionRow', tr('Your best run yet'), COLOR_BANNER_WIN)
+        end
+        if (who.boardRank or 0) > 0 then
+            sessionRow('SessionRow', tr('Number %d on the board', who.boardRank), COLOR_BANNER_WIN)
+        end
+        if who.reason and who.reason ~= 'finished' then
+            sessionRow('SessionRow', tr('Ended early: %s', who.reason), COLOR_IDLE)
+        end
+    end
+
+    window.primary:setText(tr('Play again'))
+    window.secondary:setText(tr('Leave'))
+    refreshSessionDeadline()
+    window:show()
+    window:raise()
+    window:focus()
+end
+
+local function onArenaSession(protocol, opcode, data)
+    if type(data) ~= 'table' or tonumber(data.v) ~= tonumber(WIRE_VERSION:match('%d+')) then
+        return
+    end
+
+    if data.kind == 'prep' then
+        showPrep(data)
+    elseif data.kind == 'players' then
+        updatePlayers(data)
+    elseif data.kind == 'results' then
+        showResults(data)
+    elseif data.kind == 'close' then
+        hideSession()
+        if data.text and data.text ~= '' then
+            banner(data.text, COLOR_BANNER_WIN)
+        end
+    end
+end
+
+-- Called from the .otui. They are on the module table rather than local because
+-- an @onClick in a style is resolved against the module, not against this file's
+-- upvalues.
+function onSessionPrimary()
+    if sessionKind == 'prep' then
+        send('lockin')
+    elseif sessionKind == 'results' then
+        send('again')
+    end
+end
+
+function onSessionSecondary()
+    send('leave')
+end
+
+function onSessionEscape()
+    -- Escape hides the window and does not leave the session. Leaving is a
+    -- forfeit in a run and a cancellation in prep, and neither is something a
+    -- player should be able to do by reaching for the key that closes windows.
+    if sessionWindow then
+        sessionWindow:hide()
+    end
+end
+
+-- The main panel button has one job per state, so there is always exactly one
+-- obvious thing to press. Leaving a run needs a second click within a few
+-- seconds, because a misclick there is a forfeit with four minutes left on it.
+local leaveArmedUntil = 0
+
 local function onArenaButton()
-    send(running and 'stop' or 'start')
+    if phaseNow == 'run' then
+        if g_clock.millis() < leaveArmedUntil then
+            leaveArmedUntil = 0
+            send('leave')
+        else
+            leaveArmedUntil = g_clock.millis() + 3000
+            modules.game_textmessage.displayGameMessage(tr('Click again to leave the run. It counts as a forfeit.'))
+        end
+        return
+    end
+    if phaseNow == 'countdown' then
+        return
+    end
+    if phaseNow == 'results' then
+        send('again')
+        return
+    end
+    if phaseNow == 'prep' then
+        send('lockin')
+        return
+    end
+    send('start')
 end
 
 -- Registered in onInit, not in onGameStart: Controller only unregisters extended
@@ -1074,6 +1356,13 @@ function arenaHudController:onInit()
     self:registerExtendedOpcode(OPCODE_MATCH, onArenaMatch)
     self:registerExtendedOpcode(OPCODE_TELEGRAPH, onArenaTelegraph)
     self:registerExtendedOpcode(OPCODE_KILL, onArenaKill)
+
+    -- Registered by hand, because Controller only tracks plain extended
+    -- opcodes and unregisters those in terminate(). Without the unregister
+    -- first, reloading this module throws "Opcode is already taken." and every
+    -- handler above it is lost with it.
+    pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_SESSION)
+    ProtocolGame.registerExtendedJSONOpcode(OPCODE_SESSION, onArenaSession)
 
     local ui = self.ui
     if ui then
@@ -1126,12 +1415,22 @@ function arenaHudController:onGameStart()
         if running and lastTickAt and g_clock.millis() - lastTickAt > IDLE_AFTER_MS then
             setIdle()
         end
+        -- The prep cap and the results hold count down locally rather than
+        -- being pushed once a second. The server owns both deadlines and acts
+        -- on them; this is the number on screen, and one packet a second per
+        -- player to redraw a label is not worth the inbound budget.
+        refreshSessionDeadline()
     end, 1000, 'arenaHudIdleCheck')
 end
 
 function arenaHudController:onGameEnd()
     probing = false
     privileged = false
+    phaseNow = 'idle'
+    -- Every session table on the server dies with the connection, so a window
+    -- left open across a relog would offer Play again on a session that no
+    -- longer exists.
+    hideSession()
     -- The banner and its flag, which setIdle does not touch. A result line is
     -- deliberately held with no timeout, and the panel is never destroyed on
     -- game end: Controller:setUI runs at file scope, so dataUI.onGameStart is
