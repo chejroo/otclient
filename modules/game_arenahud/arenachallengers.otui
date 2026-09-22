@@ -65,11 +65,17 @@ MainWindow
     anchors.top: nameField.bottom
     margin-top: 6
 
+  // Anchored to the parent and to the widgets around it, never to `list`.
+  // `list` takes its right edge from this bar, so anchoring this bar back to
+  // `list` would be the cycle UIAnchorLayout reports as "recursively anchored
+  // to itself".
   VerticalScrollBar
     id: listScroll
-    anchors.top: list.top
-    anchors.bottom: list.bottom
+    anchors.top: sep.bottom
+    anchors.bottom: refreshButton.top
     anchors.right: parent.right
+    margin-top: 6
+    margin-bottom: 8
     step: 14
     pixels-scroll: true
 

@@ -88,11 +88,24 @@ MainWindow
     anchors.top: deadline.bottom
     margin-top: 4
 
+  // Anchored to the same things `body` is anchored to, never to `body` itself.
+  // It used to take its top and bottom from body.top and body.bottom while body
+  // took its right edge from bodyScroll.left, and that pair is a cycle:
+  // UIAnchorLayout::updateWidget walks the chain, arrives back at the widget it
+  // started from and gives up with "recursively anchored to itself", once per
+  // widget per layout pass. The window still drew, so it only ever showed up as
+  // a flood in the client log.
+  //
+  // Every scrollbar in the stock client does it this way, debug_info.otui and
+  // characterlist.otui included: the bar anchors to the parent, and the panel
+  // anchors its right edge to the bar.
   VerticalScrollBar
     id: bodyScroll
-    anchors.top: body.top
-    anchors.bottom: body.bottom
+    anchors.top: sep.bottom
+    anchors.bottom: primary.top
     anchors.right: parent.right
+    margin-top: 6
+    margin-bottom: 8
     step: 14
     pixels-scroll: true
 

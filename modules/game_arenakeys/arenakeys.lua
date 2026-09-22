@@ -209,9 +209,15 @@ local function placeOnBar(taken, entry)
     -- createOrUpdateAction both replace `actionsetting` wholesale but leave the
     -- rest of the entry alone, and the mark sits beside it rather than inside it
     -- so nothing upstream reads it as part of an action.
-    local entry = api.getMapping(ACTION_BAR, slot)
-    if entry then
-        entry[MARK] = true
+    -- `mapping`, not `entry`. It used to be called `entry` and shadowed this
+    -- function's own argument, which is the kit entry off the wire and the only
+    -- thing here that carries a label. So the log line below read the action
+    -- bar's stored mapping instead and printed `nil` for every key of every
+    -- run, and it would have thrown outright on the day getMapping returned
+    -- nothing, two lines after the `if mapping then` that admits it can.
+    local mapping = api.getMapping(ACTION_BAR, slot)
+    if mapping then
+        mapping[MARK] = true
     end
 
     local button = buttonAt(slot)
@@ -222,7 +228,7 @@ local function placeOnBar(taken, entry)
         api.saveData()
     end
 
-    g_logger.info(string.format('arena kit slot %d: %s', slot, entry.label))
+    g_logger.debug(string.format('arena kit slot %d: %s', slot, entry.label or entry.kind or '?'))
     return true
 end
 
