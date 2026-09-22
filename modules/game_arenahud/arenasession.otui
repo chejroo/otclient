@@ -7,26 +7,40 @@
 -- wire, so declaring them would mean a fixed number of hidden labels and a
 -- silent truncation the day a champion gains a seventh key.
 
+-- text-auto-resize with text-wrap rather than a fixed height, because the rules
+-- lines are server text of no promised length. A fixed height truncates them
+-- silently, which for a window whose whole job is telling the player the rules
+-- is the worst way to fail.
 SessionRow < Label
-  height: 14
   text-align: left
+  text-wrap: true
+  text-auto-resize: true
   color: #c0c0c0ff
   font: verdana-11px-rounded
   margin-left: 2
 
 SessionHeading < Label
-  height: 16
   text-align: left
+  text-wrap: true
+  text-auto-resize: true
   color: #e0a33cff
   font: verdana-11px-rounded
   margin-top: 6
   margin-left: 2
 
+-- auto-focus: none, and it is not cosmetic. Walk keys are bound to
+-- game_interface's root panel, and a g_keyboard binding only fires while that
+-- widget's subtree holds focus. UIWindow.create sets AutoFocusFirst, so showing
+-- this window would take focus off the game panel and kill walking, during the
+-- exact thirty seconds the player is meant to be walking to the gate and trying
+-- their spells. Clicking the window still focuses it, which is what makes the
+-- Escape hook below reachable.
 MainWindow
   id: arenaSessionWindow
   !text: tr('Arena')
   size: 320 400
   visible: false
+  auto-focus: none
   @onEscape: modules.game_arenahud.onSessionEscape()
 
   Label
@@ -59,21 +73,6 @@ MainWindow
     anchors.top: deadline.bottom
     margin-top: 4
 
-  ScrollablePanel
-    id: body
-    anchors.left: parent.left
-    anchors.right: parent.right
-    anchors.top: sep.bottom
-    anchors.bottom: primary.top
-    margin-top: 6
-    margin-bottom: 8
-    margin-left: 4
-    margin-right: 4
-    vertical-scrollbar: bodyScroll
-    layout:
-      type: verticalBox
-      fit-children: true
-
   VerticalScrollBar
     id: bodyScroll
     anchors.top: body.top
@@ -81,6 +80,33 @@ MainWindow
     anchors.right: parent.right
     step: 14
     pixels-scroll: true
+
+  -- **No fit-children here, and that is the whole of this layout.** The anchors
+  -- own this panel's height, top to bottom between the separator and the
+  -- buttons. fit-children would make the box layout own it too, and the two
+  -- fight: UIVerticalLayout defers a setHeight to the content height, the
+  -- anchor layout sets it straight back, and neither side has a guard, so it
+  -- ping-pongs every frame for the life of the window. The visible cost is not
+  -- just churn: the panel is continually resized to its own content, so the
+  -- scroll range is always about zero and the wheel does nothing, which is
+  -- exactly what the scrollbar was added for.
+  --
+  -- MiniWindowContents in data/styles/30-miniwindow.otui is the pattern being
+  -- copied, down to anchoring the right edge to the scrollbar's left rather
+  -- than to the parent, which is what keeps the bar off the text.
+  ScrollablePanel
+    id: body
+    anchors.left: parent.left
+    anchors.right: bodyScroll.left
+    anchors.top: sep.bottom
+    anchors.bottom: primary.top
+    margin-top: 6
+    margin-bottom: 8
+    margin-left: 4
+    margin-right: 2
+    vertical-scrollbar: bodyScroll
+    layout:
+      type: verticalBox
 
   Button
     id: primary

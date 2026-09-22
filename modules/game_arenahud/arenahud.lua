@@ -35,6 +35,38 @@ local WIRE_VERSION = 'v6'
 -- sites read it, and it is now exactly `phase == 'run'`.
 local phaseNow = 'idle'
 
+-- Leaving a run needs a second click on the main panel button inside this
+-- window, because a misclick there is a forfeit with four minutes left on the
+-- clock. The number lives here and not in `ArenaConfig.session`, because the
+-- confirmation is a client side gesture: the server only ever sees the second
+-- press, as a `leave` verb, so a copy on the server would be a number nothing
+-- reads and it would go stale silently. `inputGuardMs` is the opposite case and
+-- does travel, in the results payload, because the server decides when a result
+-- may be dismissed.
+--
+-- Declared up here rather than beside the button, because `setIdle` clears it
+-- and `setIdle` is defined several hundred lines earlier. A local declared
+-- below its first use is not that local, it is a silent global.
+local LEAVE_CONFIRM_MS = 3000
+local leaveArmedUntil = 0
+
+-- The session window and which screen it is showing, hoisted for the same
+-- reason: `refresh` reads them to label the main panel button and is defined
+-- long before the session block that owns them.
+local sessionWindow
+local sessionKind
+
+-- What the one button says, by phase. Untranslated here and passed through tr()
+-- at the point of use, because this table is built at file load and the
+-- translation tables are not promised to be up yet.
+local BUTTON_TEXT = {
+    idle = 'Play',
+    prep = 'Ready',
+    countdown = 'Starting',
+    run = 'Leave run',
+    results = 'Play again',
+}
+
 -- No tick for this long means the run is over, or the server stopped talking.
 -- The ticks only exist during a run, so they already carry that fact; the server
 -- also pushes state on every transition, and this is the belt to that braces.
@@ -505,9 +537,22 @@ local function refresh()
         end
     end)
 
+    -- The label follows the phase, not `running`, so there is always exactly one
+    -- obvious thing to press and it says what pressing it does. It read
+    -- "Start run" through prep, countdown and results, while the click
+    -- dispatched to lock in, to nothing, and to play again, which is three
+    -- different lies from one label.
+    --
+    -- COUNTDOWN is the one state with nothing to press, so the button is
+    -- disabled rather than left looking live.
     if arenaButton then
-        arenaButton:setText(running and tr('Stop run') or tr('Start run'))
+        local label = tr(BUTTON_TEXT[phaseNow] or 'Play')
+        if sessionKind and sessionWindow and not sessionWindow:isVisible() then
+            label = tr('Show arena')
+        end
+        arenaButton:setText(label)
         arenaButton:setOn(running)
+        arenaButton:setEnabled(phaseNow ~= 'countdown')
     end
 end
 
@@ -832,6 +877,18 @@ end
 
 local function setIdle()
     running = false
+    -- **The phase goes with it.** setIdle is also the belt to opcode 172's
+    -- braces: the 1 Hz check calls it when ticks stop, which is precisely the
+    -- case where the 172 push was lost. Leaving phaseNow at 'run' there left the
+    -- panel reading IDLE while the main button still dispatched into the leave
+    -- branch, so pressing it asked the player to confirm a forfeit of a run that
+    -- had already ended, and the second press sent a `leave` the server refused.
+    -- The button could then never send `start` again until some later 172
+    -- arrived.
+    phaseNow = 'idle'
+    -- And the arm goes with it, or a confirmation from the run that just ended
+    -- is still live three seconds into the next state.
+    leaveArmedUntil = 0
     stopRunEffects()
 
     local ui = arenaHudController.ui
@@ -1050,6 +1107,12 @@ local function onArenaState(protocol, opcode, buffer)
     end
 
     local wasRunning = running
+    if phase ~= phaseNow then
+        -- A leave confirmation belongs to the state it was armed in. Left
+        -- standing across a transition, a stray first click at the bell would
+        -- still be armed three seconds into the results screen.
+        leaveArmedUntil = 0
+    end
     phaseNow = phase
     running = phase == 'run'
     probing = isProbing == '1'
@@ -1090,13 +1153,13 @@ local function send(verb)
 end
 
 -- The session window, opcode 177. One window for prep and for results, because
--- they are the same shape and the difference is wording.
-local sessionWindow
-local sessionKind
+-- they are the same shape and the difference is wording. `sessionWindow` and
+-- `sessionKind` are declared at the top of the file, because `refresh` reads
+-- them.
 local sessionDeadline
 local sessionGuardUntil = 0
 
-local function sessionRow(style, text, color)
+local function sessionRow(style, text, color, playerName)
     if not sessionWindow then
         return
     end
@@ -1105,6 +1168,15 @@ local function sessionRow(style, text, color)
     if color then
         row:setColor(color)
     end
+    -- Stamped on the widget, because the ready rows are updated in place and
+    -- matching them back by their own text is a trap. The body also holds the
+    -- rules strip, which is free server text, and the key legend, whose labels
+    -- are champion names: a rules line that happens to start with a player's
+    -- character name would be rewritten into a ready row. Worse, one name being
+    -- a prefix of another ("Arena Red" against "Arena Red II") rewrites the
+    -- longer player's row under the shorter player's name, after which the text
+    -- no longer matches anything and the row can never be recovered.
+    row.arenaPlayer = playerName
     return row
 end
 
@@ -1191,16 +1263,20 @@ local function showPrep(data)
         for _, who in ipairs(data.players) do
             sessionRow('SessionRow',
                 string.format('%s   %s', who.name, who.ready and tr('ready') or tr('choosing')),
-                who.ready and COLOR_RUNNING or COLOR_IDLE)
+                who.ready and COLOR_RUNNING or COLOR_IDLE,
+                who.name)
         end
     end
 
     window.primary:setText(tr('Ready'))
     window.secondary:setText(tr('Leave'))
     refreshSessionDeadline()
+    -- Shown and raised, never focused. The window carries auto-focus: none for
+    -- the reason spelled out in the .otui: focusing it takes focus off the game
+    -- panel, which is where the walk keys are bound, and prep is exactly when
+    -- the player wants to walk to the gate.
     window:show()
     window:raise()
-    window:focus()
 end
 
 -- Only the ready marks and the clock change, so the body is left alone rather
@@ -1212,10 +1288,13 @@ local function updatePlayers(data)
     end
     sessionDeadline = g_clock.millis() + (data.deadline or 0) * 1000
     for _, child in ipairs(sessionWindow.body:getChildren()) do
-        for _, who in ipairs(data.players or {}) do
-            if child:getText():find(who.name, 1, true) == 1 then
-                child:setText(string.format('%s   %s', who.name, who.ready and tr('ready') or tr('choosing')))
-                child:setColor(who.ready and COLOR_RUNNING or COLOR_IDLE)
+        if child.arenaPlayer then
+            for _, who in ipairs(data.players or {}) do
+                if who.name == child.arenaPlayer then
+                    child:setText(string.format('%s   %s', who.name, who.ready and tr('ready') or tr('choosing')))
+                    child:setColor(who.ready and COLOR_RUNNING or COLOR_IDLE)
+                    break
+                end
             end
         end
     end
@@ -1261,7 +1340,12 @@ local function showResults(data)
         if (who.boardRank or 0) > 0 then
             sessionRow('SessionRow', tr('Number %d on the board', who.boardRank), COLOR_BANNER_WIN)
         end
-        if who.reason and who.reason ~= 'finished' then
+        -- `still playing` is the opponent of a forfeiter and `none` is a side
+        -- that reached results with no reason set. Neither is a run that ended
+        -- early, and printing them as one would tell a racer who is winning
+        -- that they quit.
+        if who.reason and who.reason ~= 'finished'
+            and who.reason ~= 'still playing' and who.reason ~= 'none' then
             sessionRow('SessionRow', tr('Ended early: %s', who.reason), COLOR_IDLE)
         end
     end
@@ -1271,7 +1355,6 @@ local function showResults(data)
     refreshSessionDeadline()
     window:show()
     window:raise()
-    window:focus()
 end
 
 local function onArenaSession(protocol, opcode, data)
@@ -1305,6 +1388,16 @@ function onSessionPrimary()
 end
 
 function onSessionSecondary()
+    -- Gated on there being a screen. A window stranded by a module reload still
+    -- has live @onClick hooks pointing at the new chunk, and an ungated Leave
+    -- there forfeits whatever the player happens to be doing when they click it
+    -- to get rid of the thing.
+    if not sessionKind then
+        if sessionWindow then
+            sessionWindow:hide()
+        end
+        return
+    end
     send('leave')
 end
 
@@ -1318,19 +1411,20 @@ function onSessionEscape()
 end
 
 -- The main panel button has one job per state, so there is always exactly one
--- obvious thing to press.
---
--- Leaving a run needs a second click inside this window, because a misclick
--- there is a forfeit with four minutes left on the clock. The number lives here
--- and not in `ArenaConfig.session`, because the confirmation is a client side
--- gesture: the server only ever sees the second press, as a `leave` verb, so a
--- copy on the server would be a number nothing reads and it would go stale
--- silently. `inputGuardMs` is the opposite case and does travel, in the results
--- payload, because the server decides when a result may be dismissed.
-local LEAVE_CONFIRM_MS = 3000
-local leaveArmedUntil = 0
-
+-- obvious thing to press. LEAVE_CONFIRM_MS and leaveArmedUntil are declared at
+-- the top of the file, because setIdle clears them.
 local function onArenaButton()
+    -- A window that was dismissed with Escape comes back first. Escape closing
+    -- the window is the right behaviour for a key that closes windows, but
+    -- without this it is a one way door: nothing else re-shows the screen, and
+    -- the server only re-pushes it on the `ready` handshake at login, so a
+    -- player who pressed it during prep was blind until the countdown.
+    if sessionKind and sessionWindow and not sessionWindow:isVisible() then
+        sessionWindow:show()
+        sessionWindow:raise()
+        return
+    end
+
     if phaseNow == 'run' then
         if g_clock.millis() < leaveArmedUntil then
             leaveArmedUntil = 0
@@ -1431,10 +1525,33 @@ function arenaHudController:onGameStart()
     end, 1000, 'arenaHudIdleCheck')
 end
 
+-- Controller:terminate destroys self.ui, which is the mini panel, and
+-- unregisters the plain extended opcodes it tracked. It knows nothing about the
+-- session window, which is parented to the root widget, nor about opcode 177,
+-- which was registered by hand. Both have to be taken down here.
+--
+-- Without the destroy, reloading this module strands a visible window on the
+-- root widget that the new chunk has no reference to: Escape calls
+-- onSessionEscape, which hides the *new* chunk's nil window and does nothing,
+-- and the next prep draws a second window on top of it.
+--
+-- Without the unregister, unloading the module without reloading it leaves the
+-- JSON callback holding the dead chunk and still handling packets. The pcall in
+-- onInit covers the reload case and not this one.
+function arenaHudController:onTerminate()
+    if sessionWindow then
+        sessionWindow:destroy()
+        sessionWindow = nil
+    end
+    sessionKind = nil
+    pcall(ProtocolGame.unregisterExtendedJSONOpcode, OPCODE_SESSION)
+end
+
 function arenaHudController:onGameEnd()
     probing = false
     privileged = false
     phaseNow = 'idle'
+    leaveArmedUntil = 0
     -- Every session table on the server dies with the connection, so a window
     -- left open across a relog would offer Play again on a session that no
     -- longer exists.
