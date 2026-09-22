@@ -287,6 +287,12 @@ local TELEGRAPH_SOURCES = {
 -- server refuses these verbs on its own, because a client can always be
 -- modified to draw a button it was told not to.
 local DEV_ONLY = {
+    -- Stop ends somebody's run and stayed gamemaster only when the player verbs
+    -- were ungated, so for an ordinary account it was a button that is drawn and
+    -- always refused. The player's own way out is the main panel button, which
+    -- reads "Leave run" and asks for a second click. Start and Status are
+    -- deliberately not in this list: both verbs are ungated now, so both work.
+    stopButton = true,
     probeButton = true,
     simButton = true,
     telegraphButton = true,
