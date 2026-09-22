@@ -19,7 +19,7 @@
 MainWindow
   id: arenaChallengeWindow
   !text: tr('Challenge')
-  size: 280 150
+  size: 280 190
   visible: false
   auto-focus: none
   @onEscape: modules.game_arenahud.onChallengeDecline()
@@ -66,20 +66,28 @@ MainWindow
     color: #808080ff
     font: verdana-11px-rounded
 
+  // Decline left, Accept right. The confirming button goes on the right here
+  // the way it does in every other dialog in this client, so muscle memory from
+  // the rest of the UI does not answer a challenge the wrong way.
+  //
+  // White rather than the stock Button colour, which is #dfdfdfff and reads as
+  // greyed out next to the window's own white headline.
   Button
-    id: accept
-    !text: tr('Accept')
+    id: decline
+    !text: tr('Decline')
+    color: #ffffffff
     anchors.left: parent.left
     anchors.right: parent.horizontalCenter
     anchors.bottom: parent.bottom
     margin-right: 3
-    @onClick: modules.game_arenahud.onChallengeAccept()
+    @onClick: modules.game_arenahud.onChallengeDecline()
 
   Button
-    id: decline
-    !text: tr('Decline')
+    id: accept
+    !text: tr('Accept')
+    color: #ffffffff
     anchors.left: parent.horizontalCenter
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     margin-left: 3
-    @onClick: modules.game_arenahud.onChallengeDecline()
+    @onClick: modules.game_arenahud.onChallengeAccept()

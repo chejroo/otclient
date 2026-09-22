@@ -55,6 +55,7 @@ MainWindow
   Button
     id: sendButton
     !text: tr('Challenge')
+    color: #ffffffff
     width: 90
     anchors.right: parent.right
     anchors.top: hint.bottom
@@ -103,6 +104,7 @@ MainWindow
   Button
     id: refreshButton
     !text: tr('Refresh')
+    color: #ffffffff
     anchors.left: parent.left
     anchors.right: parent.horizontalCenter
     anchors.bottom: parent.bottom
@@ -112,6 +114,7 @@ MainWindow
   Button
     id: closeButton
     !text: tr('Close')
+    color: #ffffffff
     anchors.left: parent.horizontalCenter
     anchors.right: parent.right
     anchors.bottom: parent.bottom

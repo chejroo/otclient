@@ -139,6 +139,7 @@ MainWindow
   Button
     id: primary
     !text: tr('Ready')
+    color: #ffffffff
     anchors.left: parent.left
     anchors.right: parent.horizontalCenter
     anchors.bottom: parent.bottom
@@ -148,6 +149,7 @@ MainWindow
   Button
     id: secondary
     !text: tr('Leave')
+    color: #ffffffff
     anchors.left: parent.horizontalCenter
     anchors.right: parent.right
     anchors.bottom: parent.bottom
