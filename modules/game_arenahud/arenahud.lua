@@ -1478,6 +1478,13 @@ local function showChallenge(data)
     window:raise()
 end
 
+-- Forward declared, because the handler below calls it and it is defined with
+-- the rest of the picker further down. A `local function` declared after its
+-- caller is not visible to that caller: the name resolves as a global instead,
+-- which in a sandboxed module is nil, and the failure waits until the server
+-- actually answers `who` rather than showing up at load.
+local fillChallengers
+
 local function onArenaChallenge(protocol, opcode, data)
     if type(data) ~= 'table' or tonumber(data.v) ~= tonumber(WIRE_VERSION:match('%d+')) then
         return
@@ -1542,20 +1549,44 @@ local function sendChallenge(name)
     end
 end
 
-local function fillChallengers(data)
+-- The names the server last said could be challenged, kept so typing can filter
+-- and complete against them without asking again. Refreshed whenever the list
+-- arrives.
+local challengerNames = {}
+local challengerEmpty = nil
+-- Guards the completion write below. setText inside onTextChange fires
+-- onTextChange again, and without this the second pass completes the completion
+-- and the third completes that.
+local completing = false
+-- What the field held last time, so completion happens only while characters
+-- are being added. Without it, deleting a character is immediately undone by
+-- the completion putting it back, and backspace appears not to work at all.
+local lastTyped = ''
+
+local function matchingNames(prefix)
+    local lower = (prefix or ''):lower()
+    if lower == '' then
+        return challengerNames
+    end
+    local out = {}
+    for _, name in ipairs(challengerNames) do
+        if name:lower():sub(1, #lower) == lower then
+            out[#out + 1] = name
+        end
+    end
+    return out
+end
+
+local function renderRows(names)
     local window = ensureChallengersWindow()
     window.list:destroyChildren()
 
-    local names = data.names or {}
     if #names == 0 then
         local row = g_ui.createWidget('ChallengeRow', window.list)
-        -- Says which kind of empty it is. "Nobody" and "a race is already
-        -- running" are different problems and the fix for each is different.
-        if tonumber(data.live) == 1 then
-            row:setText(tr('A race is already running.'))
-        else
-            row:setText(tr('Nobody else is free right now.'))
-        end
+        -- Says which kind of empty it is. "Nobody is free", "a race is already
+        -- running" and "nothing matches what you typed" are three different
+        -- problems with three different fixes.
+        row:setText(challengerEmpty or tr('No name starts with that.'))
         row:setEnabled(false)
         return
     end
@@ -1569,6 +1600,56 @@ local function fillChallengers(data)
     end
 end
 
+-- Filters the list to what has been typed, and completes the field to the first
+-- match with the added part selected.
+--
+-- Selected rather than merely appended, because UITextEdit::appendCharacter
+-- calls del() when there is a selection, so carrying on typing replaces the
+-- suggestion exactly the way every other autocomplete behaves. Enter accepts it
+-- whole.
+local function onNameTyped(widget, text)
+    if completing then
+        return
+    end
+
+    local hits = matchingNames(text)
+    renderRows(hits)
+
+    -- Only while adding characters, and never on an empty field.
+    if #text > #lastTyped and #text > 0 and #hits > 0 then
+        local full = hits[1]
+        if full:lower() ~= text:lower() then
+            completing = true
+            widget:setText(full)
+            widget:setCursorPos(#text)
+            widget:setSelection(#text, #full)
+            completing = false
+        end
+    end
+
+    lastTyped = widget:getText()
+end
+
+-- Assigns the forward local declared above. Not `local function` again, which
+-- would make a second, shadowing local and leave the handler's one nil.
+function fillChallengers(data)
+    local window = ensureChallengersWindow()
+    challengerNames = data.names or {}
+    challengerEmpty = nil
+
+    if #challengerNames == 0 then
+        challengerEmpty = tonumber(data.live) == 1
+            and tr('A race is already running.')
+            or tr('Nobody else is free right now.')
+    end
+
+    -- Bound here rather than in the .otui, because the handler needs the list
+    -- and the list only exists once this has arrived.
+    window.nameField.onTextChange = onNameTyped
+    lastTyped = window.nameField:getText() or ''
+
+    renderRows(matchingNames(lastTyped))
+end
 local function askWho()
     arenaHudController:sendExtendedOpcode(OPCODE_CONTROL, WIRE_VERSION .. '|who')
 end
@@ -1576,6 +1657,7 @@ end
 function onChallengersOpen()
     local window = ensureChallengersWindow()
     window.nameField:setText('')
+    lastTyped = ''
     window.list:destroyChildren()
     window:show()
     window:raise()

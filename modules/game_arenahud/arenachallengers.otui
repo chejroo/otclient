@@ -27,10 +27,13 @@ MainWindow
   size: 300 360
   visible: false
   @onEscape: modules.game_arenahud.onChallengersClose()
+  // Enter accepts whatever the field holds, which after completion is the whole
+  // suggested name rather than the few characters that were typed.
+  @onEnter: modules.game_arenahud.onChallengersSend()
 
   Label
     id: hint
-    !text: tr('Pick a player, or type a name.')
+    !text: tr('Pick a player, or type to filter.')
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
