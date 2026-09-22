@@ -51,8 +51,9 @@ local phaseNow = 'idle'
 -- Declared up here rather than beside the button, because `setIdle` clears it
 -- and `setIdle` is defined several hundred lines earlier. A local declared
 -- below its first use is not that local, it is a silent global.
-local LEAVE_CONFIRM_MS = 3000
-local leaveArmedUntil = 0
+-- The open leave confirmation, so a second click on the panel button raises
+-- nothing rather than stacking a second identical box.
+local leaveBox = nil
 
 -- The session window and which screen it is showing, hoisted for the same
 -- reason: `refresh` reads them to label the main panel button and is defined
@@ -568,7 +569,11 @@ local function refresh()
             label = tr('Show arena')
         end
         arenaButton:setText(label)
-        arenaButton:setOn(running)
+        -- Never `setOn`. `$on` in the Button style is the pressed image with the
+        -- text nudged a pixel, which on a button that is on for the whole of an
+        -- eight minute run reads as stuck rather than as active. The label
+        -- already says which state it is in.
+        arenaButton:setOn(false)
         arenaButton:setEnabled(phaseNow ~= 'countdown')
     end
 
@@ -914,7 +919,6 @@ local function setIdle()
     phaseNow = 'idle'
     -- And the arm goes with it, or a confirmation from the run that just ended
     -- is still live three seconds into the next state.
-    leaveArmedUntil = 0
     stopRunEffects()
 
     local ui = arenaHudController.ui
@@ -1137,8 +1141,7 @@ local function onArenaState(protocol, opcode, buffer)
         -- A leave confirmation belongs to the state it was armed in. Left
         -- standing across a transition, a stray first click at the bell would
         -- still be armed three seconds into the results screen.
-        leaveArmedUntil = 0
-    end
+        end
     phaseNow = phase
     running = phase == 'run'
     probing = isProbing == '1'
@@ -1720,8 +1723,8 @@ function onSessionEscape()
 end
 
 -- The main panel button has one job per state, so there is always exactly one
--- obvious thing to press. LEAVE_CONFIRM_MS and leaveArmedUntil are declared at
--- the top of the file, because setIdle clears them.
+-- obvious thing to press. `leaveBox` is declared at the top of the file, beside
+-- the other state the teardown paths have to clear.
 local function onArenaButton()
     -- A window that was dismissed with Escape comes back first. Escape closing
     -- the window is the right behaviour for a key that closes windows, but
@@ -1735,13 +1738,28 @@ local function onArenaButton()
     end
 
     if phaseNow == 'run' then
-        if g_clock.millis() < leaveArmedUntil then
-            leaveArmedUntil = 0
-            send('leave')
-        else
-            leaveArmedUntil = g_clock.millis() + LEAVE_CONFIRM_MS
-            modules.game_textmessage.displayGameMessage(tr('Click again to leave the run. It counts as a forfeit.'))
+        -- A modal box, not a second click on a timer. The old confirmation was
+        -- "press it again within three seconds", which asks the player to
+        -- notice a line of game text during the one part of the session where
+        -- they are busy, and which silently disarms if they hesitate. Leaving a
+        -- run is a forfeit and a race ends for both players, so it deserves a
+        -- question that waits for an answer.
+        if leaveBox then
+            return
         end
+        leaveBox = displayGeneralBox(tr('Leave the run'),
+            tr('Leaving counts as a forfeit. In a race it ends the match for both players.'), {
+                { text = tr('Leave'), callback = function()
+                    if leaveBox then leaveBox:destroy() leaveBox = nil end
+                    send('leave')
+                end },
+                { text = tr('Keep playing'), callback = function()
+                    if leaveBox then leaveBox:destroy() leaveBox = nil end
+                end },
+                anchor = AnchorHorizontalCenter
+            }, nil, function()
+                if leaveBox then leaveBox:destroy() leaveBox = nil end
+            end)
         return
     end
     if phaseNow == 'countdown' then
@@ -1881,7 +1899,6 @@ function arenaHudController:onGameEnd()
     probing = false
     privileged = false
     phaseNow = 'idle'
-    leaveArmedUntil = 0
     -- Every session table on the server dies with the connection, so a window
     -- left open across a relog would offer Play again on a session that no
     -- longer exists.
@@ -1891,6 +1908,12 @@ function arenaHudController:onGameEnd()
     -- relog offers an Accept for a challenge nobody is making.
     hideChallenge()
     onChallengersClose()
+    -- A confirmation about a run that has already ended answers a question
+    -- nobody is asking any more, and `leave` on a dead session is a refusal.
+    if leaveBox then
+        leaveBox:destroy()
+        leaveBox = nil
+    end
     -- The banner and its flag, which setIdle does not touch. A result line is
     -- deliberately held with no timeout, and the panel is never destroyed on
     -- game end: Controller:setUI runs at file scope, so dataUI.onGameStart is
