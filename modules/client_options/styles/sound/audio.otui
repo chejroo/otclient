@@ -16,6 +16,25 @@ UIWidget
     anchors.right: parent.right
     anchors.top: prev.bottom
     margin-top: 7
+    height: 22
+
+    OptionScaleScroll
+      id: masterSoundVolume
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      &minimumScrollValue: 0
+      &maximumScrollValue: 100
+      &scrollSize: 21
+      @onSetup: |
+        local value = modules.client_options.getOption('masterSoundVolume')
+        self:setText(tr('Master volume: %d', value))
+
+  SmallReversedQtPanel
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: prev.bottom
+    margin-top: 7
     height: 44
   
     OptionCheckBox
@@ -34,3 +53,22 @@ UIWidget
       @onSetup: |
         local value = modules.client_options.getOption('musicSoundVolume')
         self:setText(tr('Music volume: %d', value))
+
+  SmallReversedQtPanel
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: prev.bottom
+    margin-top: 7
+    height: 22
+
+    OptionScaleScroll
+      id: arenaSoundVolume
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      &minimumScrollValue: 0
+      &maximumScrollValue: 100
+      &scrollSize: 21
+      @onSetup: |
+        local value = modules.client_options.getOption('arenaSoundVolume')
+        self:setText(tr('Arena effects volume: %d', value))

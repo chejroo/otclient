@@ -136,22 +136,27 @@ MainWindow
     layout:
       type: verticalBox
 
+  // Confirm on the right, cancel on the left, everywhere in this client. The
+  // ids stay primary and secondary because the key handlers are named after
+  // them; only the side they sit on moves. secondary is always Leave and
+  // primary is always the affirmative, Ready in prep and Play again on the
+  // results screen, so the sides hold in every state the window has.
   Button
-    id: primary
-    !text: tr('Ready')
+    id: secondary
+    !text: tr('Leave')
     color: #ffffffff
     anchors.left: parent.left
     anchors.right: parent.horizontalCenter
     anchors.bottom: parent.bottom
     margin-right: 3
-    @onClick: modules.game_arenahud.onSessionPrimary()
+    @onClick: modules.game_arenahud.onSessionSecondary()
 
   Button
-    id: secondary
-    !text: tr('Leave')
+    id: primary
+    !text: tr('Ready')
     color: #ffffffff
     anchors.left: parent.horizontalCenter
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     margin-left: 3
-    @onClick: modules.game_arenahud.onSessionSecondary()
+    @onClick: modules.game_arenahud.onSessionPrimary()

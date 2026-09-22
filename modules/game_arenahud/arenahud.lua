@@ -144,6 +144,32 @@ local COMBO_BAR_STEP_MS = 50
 -- guessing it from combat traffic.
 local SOUND_ENABLED = true
 
+-- One multiplier over every cue, because until 22-09-2026 there was no way to
+-- turn the arena down at all. The client has no master volume: SoundManager.play
+-- checks m_audioEnabled and then uses whatever gain the caller passed, and the
+-- options panel's only slider drives SoundChannels.Music, which nothing here
+-- touches. So the choice was mute or full blast, and a telegraph cue fires every
+-- 180 ms for a whole run.
+--
+-- It scales the mix rather than replacing it. The per cue gains below are a
+-- balance between each other, loud for the shot that costs health and quiet for
+-- the player's own rune, and that balance is still right at any volume.
+local SOUND_VOLUME_DEFAULT = 60
+
+-- Read through `exists` rather than trusting getNumber, which answers 0 for a
+-- key that was never written. Module load order is not guaranteed, so this can
+-- run before client_options has set its defaults, and a missing key reading as
+-- zero would be silence that looks like a broken cue.
+local function soundVolume()
+    if not g_settings then
+        return SOUND_VOLUME_DEFAULT / 100
+    end
+    if not g_settings.exists('arenaSoundVolume') then
+        return SOUND_VOLUME_DEFAULT / 100
+    end
+    return math.max(0, math.min(100, g_settings.getNumber('arenaSoundVolume'))) / 100
+end
+
 -- The bank names every file after a hash of its contents, so a filename says
 -- nothing about what is inside it. These were picked by decoding
 -- data/sounds/<version>/sounds-*.dat, the protobuf bank the client already
@@ -187,13 +213,18 @@ local SOUNDS = {
     -- 2770 and 2772, both EVENT, 5.2s and 4.2s. Long on purpose: the result
     -- banner is held until the next run resets the panel, so the sound is held
     -- with it rather than ending before the player has read the score.
+    -- Below the warning cues rather than level with them, and 22-09-2026 is when
+    -- that stopped being a detail: these are the two longest samples in the bank
+    -- and they play over a results screen the player is reading, so at parity
+    -- with the shot that costs health they are the loudest thing in a session
+    -- and the one carrying the least information.
     resultWin = {
         file = 'sound-04759ce073034b5d97f546a7783c98b1de2d8e5492971e55058abe3708939298.ogg',
-        gain = 1.0, announcer = true,
+        gain = 0.85, announcer = true,
     },
     resultLoss = {
         file = 'sound-b3680c4d3a83a483ffa89dabe36bde2b245496b30c91f89e7f10c63bdc902da0.ogg',
-        gain = 1.0, announcer = true,
+        gain = 0.85, announcer = true,
     },
     -- 2854, UI, 0.34s, pitched by the chain, see KILL_PITCH_STEP.
     kill = {
@@ -443,6 +474,14 @@ local function playCue(name, pitch)
 
     lastCueAt[name] = now
 
+    -- Applied here rather than on the channel, because half these cues have no
+    -- channel to set a gain on. A zero would mean "use 1.0" to SoundManager.play,
+    -- which reads a zero gain as unset, so silence is a return instead.
+    local gain = (snd.gain or 1) * soundVolume()
+    if gain <= 0 then
+        return
+    end
+
     -- Announcer cues share SoundChannels.Effect, whose play() stops whatever it
     -- was playing first, so a result cuts off the phase banner still sounding
     -- under it. Kill and telegraph cues go straight to the mixer instead: they
@@ -454,12 +493,12 @@ local function playCue(name, pitch)
             announcerChannel = ok and channel or false
         end
         if announcerChannel then
-            pcall(announcerChannel.play, announcerChannel, path, 0, snd.gain or 1, pitch or 1)
+            pcall(announcerChannel.play, announcerChannel, path, 0, gain, pitch or 1)
             return
         end
     end
 
-    pcall(g_sounds.play, path, 0, snd.gain or 1, pitch or 1)
+    pcall(g_sounds.play, path, 0, gain, pitch or 1)
 end
 
 local function formatClock(seconds)
@@ -1188,6 +1227,17 @@ end
 local sessionDeadline
 local sessionGuardUntil = 0
 
+-- Which of the two prep clocks this is, taken from the prep payload's `mode`
+-- rather than counted off the player list. A solo prep cap stopped starting
+-- runs on 22-09-2026 and became a presence check, so the two modes need two
+-- labels, and one player in the list is not the same question: a race whose
+-- opponent packet has not landed yet would read as solo and promise an auto
+-- start that mode really does do.
+--
+-- Remembered rather than read per packet, because the players packet that
+-- carries the renewed deadline carries no mode.
+local sessionSolo = false
+
 local function sessionRow(style, text, color, playerName)
     if not sessionWindow then
         return
@@ -1239,7 +1289,18 @@ local function refreshSessionDeadline()
     end
     local left = math.max(0, math.floor((sessionDeadline - g_clock.millis()) / 1000))
     if sessionKind == 'prep' then
-        sessionWindow.deadline:setText(tr('Starting in %d s unless everyone is ready', left))
+        -- The clock stays on screen in both modes and says two different
+        -- things, because it is two different deadlines. A race locks in at
+        -- zero, so naming the start is the truth and the pressure. Solo does
+        -- not: at zero the server either renews the window or cancels a player
+        -- who has not moved or clicked, so the number is how long the player
+        -- has to prove they are there, and the run waits for Ready however long
+        -- the hotkey dialog takes.
+        if sessionSolo then
+            sessionWindow.deadline:setText(tr('Press Ready to start. Away check in %d s', left))
+        else
+            sessionWindow.deadline:setText(tr('Starting in %d s unless everyone is ready', left))
+        end
     else
         sessionWindow.deadline:setText(tr('Leaving in %d s', left))
     end
@@ -1256,6 +1317,7 @@ local function showPrep(data)
     local window = ensureSessionWindow()
     sessionKind = 'prep'
     sessionGuardUntil = 0
+    sessionSolo = (data.mode or 'solo') ~= 'race'
     clearSessionBody()
 
     window.headline:setText(data.again and tr('Another run') or tr('Get ready'))
@@ -1747,6 +1809,11 @@ local function onArenaButton()
         if leaveBox then
             return
         end
+        -- Confirm on the right, cancel on the left, and here that means listing
+        -- the confirm FIRST, which reads backwards. UIMessageBox anchors button
+        -- one to the parent's right edge and every later one to the left of the
+        -- button before it, so the array runs right to left across the dialog.
+        -- Leave first is what puts Leave on the right.
         leaveBox = displayGeneralBox(tr('Leave the run'),
             tr('Leaving counts as a forfeit. In a race it ends the match for both players.'), {
                 { text = tr('Leave'), callback = function()

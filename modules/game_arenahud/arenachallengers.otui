@@ -101,22 +101,26 @@ MainWindow
     layout:
       type: verticalBox
 
+  // Close is the way out of this window, so it takes the left seat the rule
+  // gives every cancel. Refresh is neither, and it takes the right by default
+  // rather than by argument: the affirmative here is Challenge, which sits at
+  // the top of the window next to the name being challenged.
   Button
-    id: refreshButton
-    !text: tr('Refresh')
+    id: closeButton
+    !text: tr('Close')
     color: #ffffffff
     anchors.left: parent.left
     anchors.right: parent.horizontalCenter
     anchors.bottom: parent.bottom
     margin-right: 3
-    @onClick: modules.game_arenahud.onChallengersRefresh()
+    @onClick: modules.game_arenahud.onChallengersClose()
 
   Button
-    id: closeButton
-    !text: tr('Close')
+    id: refreshButton
+    !text: tr('Refresh')
     color: #ffffffff
     anchors.left: parent.horizontalCenter
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     margin-left: 3
-    @onClick: modules.game_arenahud.onChallengersClose()
+    @onClick: modules.game_arenahud.onChallengersRefresh()

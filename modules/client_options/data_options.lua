@@ -221,6 +221,21 @@ return {
             end
         end
     },
+    -- Everything the mixer plays, including the sounds the server sends, which
+    -- reach g_sounds.play with no gain and no channel and so answered to nothing
+    -- before this existed.
+    masterSoundVolume                 = {
+        value = 60,
+        action = function(value, options, controller, panels, extraWidgets)
+            if g_sounds and g_sounds.setMasterGain then
+                g_sounds.setMasterGain(value / 100)
+            end
+            local label = panels.soundPanel and panels.soundPanel:recursiveGetChildById('masterSoundVolume')
+            if label then
+                label:setText(tr('Master volume: %d', value))
+            end
+        end
+    },
     enableMusicSound                  = {
         value = true,
         action = function(value, options, controller, panels, extraWidgets)
@@ -236,6 +251,24 @@ return {
                 g_sounds.getChannel(SoundChannels.Music):setGain(value / 100)
             end
             panels.soundPanel:recursiveGetChildById('musicSoundVolume'):setText(tr('Music volume: %d', value))
+        end
+    },
+    -- The arena HUD's own cues, which reach no channel and so no slider above.
+    -- game_arenahud reads this key straight out of g_settings on every cue, so
+    -- there is nothing to push at it here and nothing to break when that module
+    -- is not loaded.
+    arenaSoundVolume                  = {
+        value = 60,
+        action = function(value, options, controller, panels, extraWidgets)
+            -- Guarded, unlike the music label above, because setOption runs this
+            -- before it writes g_settings. The label is cosmetic and the write is
+            -- the whole point, so an action that throws here would leave the
+            -- slider moving and nothing getting quieter, with the cause three
+            -- frames up a stack nobody is looking at.
+            local label = panels.soundPanel and panels.soundPanel:recursiveGetChildById('arenaSoundVolume')
+            if label then
+                label:setText(tr('Arena effects volume: %d', value))
+            end
         end
     },
     enableLights                      = {

@@ -1,5 +1,5 @@
 -- Space attacks the next creature in the battle list, and the run's kit is put
--- on the action bar so the player can see it and bind it however they like.
+-- on action bar 1 so the player can see it and bind it however they like.
 --
 -- This lives in its own module rather than in the hotkeys manager's defaults,
 -- for two reasons. loadDefautComboKeys only runs when a profile has NO saved
@@ -10,17 +10,34 @@
 -- Space is bound to the game root panel on purpose. A key bound there does not
 -- fire while the chat console holds focus, which is what keeps Space typing a
 -- space when the player is actually talking. With chat off, it attacks.
+
+-- **The bar is wiped and restored, and that is the third model this has had.**
+-- It was F1 to F6 chosen by us, which is the player's keyboard and not ours. It
+-- was then first-free-slot with an `arenaKit` mark on each mapping, which read
+-- well and failed in practice: a mapping that lost the mark, or that predated
+-- the mark, was invisible to the clear, the next run walked past it and placed
+-- a second copy, and an evening of testing left the bar holding three kits.
 --
--- The kit used to be bound to F1 through F6 here, chosen by us. That was wrong:
--- it is the player's keyboard. The kit now goes into action bar slots, which is
--- the surface Tibia already has for this, and every player assigns their own
--- keys through the action bar's own hotkey UI.
+-- So the arena no longer tries to recognise its own leftovers. At prep it
+-- photographs bar 1, empties it, and writes the kit into slots 1..N in the
+-- order the manifest arrives. At the end of the run it empties the bar again
+-- and puts the photograph back. Nothing survives a wipe, so nothing can be
+-- duplicated by the next one, and the kit is on the same slots every run,
+-- which is the only version a player can learn.
+--
+-- **Hotkeys need no handling at all**, which is worth stating because the
+-- opposite is the obvious assumption. An action bar key is not stored on the
+-- mapping: it lives in the hotkey set as `TriggerActionButton_<n>` against a
+-- key sequence (ApiJson.updateActionBarHotkey), so it is bound to the button
+-- number and not to what the button holds. Wiping mappings leaves every
+-- assignment intact, and a player whose F3 fires button 3 keeps firing button 3
+-- through the kit and out the other side.
 
 -- Opcode 176 is claimed in docs/opcodes.md, and the version token has to match
 -- ArenaConfig.hud.version on the server and WIRE_VERSION in
 -- modules/game_arenahud/arenahud.lua. A mismatch leaves the bar untouched,
--- which is the intended failure: a slot holding the wrong thing is worse than
--- an empty one.
+-- which is the intended failure: a bar holding the wrong thing is worse than
+-- one holding nothing.
 local OPCODE_KEYS = 176
 -- v6 with the session loop. The manifest itself did not change shape: the
 -- version is shared by every arena opcode so that one token check covers the
@@ -32,25 +49,25 @@ local BINDING = 'Space'
 -- The first bar, which is the row along the bottom of the screen.
 local ACTION_BAR = 1
 
--- How far along the bar to look for room. The bar holds 50 buttons; a kit that
--- needed more than the first 30 free would be lost off the end of what anyone
--- can see anyway.
-local SLOT_SEARCH_LIMIT = 30
+-- Every button the bar has, not just the visible ones. A wipe that stopped at
+-- the visible width would leave the player's own buttons off the right edge in
+-- place, and the restore would then double them.
+local BAR_SLOTS = 50
 
--- Slots this run's manifest has already claimed, so six entries arriving as six
--- separate messages do not all pick the same free slot. Reset when a manifest
--- starts, which is the first bind after any non-bind verb.
-local taken = {}
+-- The photograph of the player's own bar, on disk rather than in memory.
+--
+-- In memory it would be lost to a `docker kill`, an alt-F4 or a crash inside a
+-- run, and with it the player's whole arrangement, permanently. On disk the
+-- restore can also run at startup, which is where a client that died mid run
+-- gets its bar back. Written as JSON rather than through g_settings because an
+-- actionsetting holds booleans and numbers that an OTML round trip returns as
+-- strings, and `sendAutomatically` coming back as the string "true" is a slot
+-- that types the spell into the chat box instead of casting it.
+local SNAPSHOT_FILE = '/settings/arena-actionbar-snapshot.json'
 
--- The flag written onto every mapping the arena creates, and the whole reason
--- the bar does not silently fill up over an evening. Without it the second run
--- would skip the six slots the first run wrote, because they are no longer free,
--- and take six more; five runs would eat the thirty slots searched and the sixth
--- would place nothing. It is written on the mapping entry rather than kept in
--- memory so it survives a client restart or a crash mid run, which is exactly
--- when leftovers would otherwise be stranded with nothing left that knows they
--- are ours.
-local MARK = 'arenaKit'
+-- How many entries of the current manifest have been written. Doubles as the
+-- slot counter, since the bar is empty when the first one arrives.
+local placed = 0
 
 local bound = false
 
@@ -92,143 +109,187 @@ local function unbind()
     bound = false
 end
 
-local function actionBar()
-    local bars = modules.game_actionbar and modules.game_actionbar.actionBars
-    return bars and bars[ACTION_BAR]
+local function api()
+    return modules.game_actionbar and modules.game_actionbar.ApiJson
 end
 
 local function buttonAt(slot)
-    local bar = actionBar()
+    local bars = modules.game_actionbar and modules.game_actionbar.actionBars
+    local bar = bars and bars[ACTION_BAR]
     if not bar or not bar.tabBar then
         return nil
     end
-
-    local id = ACTION_BAR .. '.' .. slot
-    for _, child in ipairs(bar.tabBar:getChildren()) do
-        if child:getId() == id then
-            return child
-        end
-    end
-    return nil
+    return bar.tabBar:getChildById(ACTION_BAR .. '.' .. slot)
 end
 
--- The first slot on the bar that holds nothing, searched from the start.
---
--- Searched rather than assumed, because the obvious slots are taken. The shipped
--- defaults fill buttons 1 to 5 for every vocation, and a profile that has been
--- played fills more: this machine's Paladin set occupies 1 to 6. Placing the kit
--- at 1 to 6 therefore placed nothing at all, six times, silently.
-local function firstFreeSlot(api, taken)
-    for slot = 1, SLOT_SEARCH_LIMIT do
-        if not taken[slot] then
-            local existing = api.getMapping(ACTION_BAR, slot)
-            if not (existing and existing.actionsetting) then
-                return slot
-            end
-        end
-    end
-    return nil
-end
-
--- Takes back every slot the arena wrote, and only those.
---
--- The test is the mark, not the contents, so a slot the player dragged their own
--- thing into is left alone even if it sits where a kit entry used to, and a kit
--- entry the player moved elsewhere is still recognised and removed. Idempotent
--- on purpose: it runs both when a run ends and again when the next one starts,
--- because the first of those does not happen if the client is closed mid run.
-local function sweepPreviousKit()
-    local api = modules.game_actionbar and modules.game_actionbar.ApiJson
+local function refresh(slot)
     local update = modules.game_actionbar and modules.game_actionbar.updateButton
-    if not api then
+    local button = buttonAt(slot)
+    if button and update then
+        update(button)
+    end
+end
+
+local function copy(value)
+    if type(value) ~= 'table' then
+        return value
+    end
+    local out = {}
+    for key, entry in pairs(value) do
+        out[key] = copy(entry)
+    end
+    return out
+end
+
+local function hasSnapshot()
+    return g_resources.fileExists(SNAPSHOT_FILE)
+end
+
+local function dropSnapshot()
+    if hasSnapshot() then
+        g_resources.deleteFile(SNAPSHOT_FILE)
+    end
+end
+
+-- Photographs bar 1. An empty bar is photographed too, and the empty file is
+-- the point: without it a restore cannot tell "the player had nothing" from
+-- "there is nothing to put back" and would leave the kit on the bar.
+local function takeSnapshot()
+    local a = api()
+    if not a then
+        return false
+    end
+
+    local rows = {}
+    for slot = 1, BAR_SLOTS do
+        local mapping = a.getMapping(ACTION_BAR, slot)
+        if mapping and mapping.actionsetting then
+            rows[#rows + 1] = { button = slot, actionsetting = copy(mapping.actionsetting) }
+        end
+    end
+
+    local ok, encoded = pcall(json.encode, rows)
+    if not ok then
+        g_logger.error('arena kit: could not encode the action bar snapshot, bar left alone')
+        return false
+    end
+
+    if not g_resources.directoryExists('/settings/') then
+        g_resources.makeDir('/settings/')
+    end
+    g_resources.writeFileContents(SNAPSHOT_FILE, encoded)
+    g_logger.info(string.format('arena kit: bar photographed, %d button(s)', #rows))
+    return true
+end
+
+local function readSnapshot()
+    if not hasSnapshot() then
+        return nil
+    end
+    local ok, decoded = pcall(function()
+        return json.decode(g_resources.readFileContents(SNAPSHOT_FILE))
+    end)
+    if not ok or type(decoded) ~= 'table' then
+        return nil
+    end
+    return decoded
+end
+
+local function wipeBar()
+    local a = api()
+    if not a then
         return 0
     end
 
     local removed = 0
-    for slot = 1, SLOT_SEARCH_LIMIT do
-        local existing = api.getMapping(ACTION_BAR, slot)
-        if existing and existing[MARK] then
-            api.removeAction(ACTION_BAR, slot)
-            local button = buttonAt(slot)
-            if button and update then
-                update(button)
-            end
+    for slot = 1, BAR_SLOTS do
+        if a.getMapping(ACTION_BAR, slot) then
+            a.removeAction(ACTION_BAR, slot)
+            refresh(slot)
             removed = removed + 1
         end
     end
 
-    if removed > 0 then
-        if api.saveData then
-            api.saveData()
-        end
-        g_logger.info(string.format('arena kit: %d slot(s) handed back', removed))
+    if a.saveData then
+        a.saveData()
     end
     return removed
 end
 
--- Writes one kit entry into the first free slot.
---
--- Never overwriting is the whole point. A player who dragged the potion where
--- they want it keeps it there, a player who filled slot 3 with something of
--- their own keeps that, and the arena only ever fills what is free. The
--- alternative, rewriting the bar at every run start, would undo the player's
--- own arrangement several times an evening and would read as the client fighting
--- them.
-local function placeOnBar(taken, entry)
-    local api = modules.game_actionbar and modules.game_actionbar.ApiJson
-    local update = modules.game_actionbar and modules.game_actionbar.updateButton
-    if not api or not update then
+-- Rows go straight into the mapping array rather than through
+-- createOrUpdateAction, because an actionsetting can carry a passive ability, a
+-- special action or three multiActions and there is no upstream call that puts
+-- one back whole. findMappingEntry falls back to a linear scan whenever its
+-- index misses, and a wipe clears the index for every slot it touches, so an
+-- appended row is found by every reader and cached on first lookup.
+local function restoreBar()
+    local rows = readSnapshot()
+    if not rows then
+        return false
+    end
+    local a = api()
+    if not a then
+        return false
+    end
+
+    wipeBar()
+
+    local mappings = a.getMappings()
+    local count = 0
+    for _, row in ipairs(rows) do
+        local slot = tonumber(row.button)
+        if slot and row.actionsetting then
+            mappings[#mappings + 1] = {
+                actionBar = ACTION_BAR,
+                actionButton = slot,
+                actionsetting = row.actionsetting,
+            }
+            count = count + 1
+        end
+    end
+
+    if a.saveData then
+        a.saveData()
+    end
+    for _, row in ipairs(rows) do
+        local slot = tonumber(row.button)
+        if slot then
+            refresh(slot)
+        end
+    end
+
+    dropSnapshot()
+    g_logger.info(string.format('arena kit: bar restored, %d button(s)', count))
+    return true
+end
+
+local function place(slot, entry)
+    local a = api()
+    if not a then
         g_logger.info('arena kit: no action bar to place ' .. entry.label .. ' on')
         return false
     end
 
-    local slot = firstFreeSlot(api, taken)
-    if not slot then
-        -- Said out loud. This used to return quietly, so a bar with no room
-        -- looked exactly like a kit that had been delivered.
-        g_logger.info('arena kit: no free action bar slot for ' .. entry.label)
-        return false
-    end
-    taken[slot] = true
-
     if entry.kind == 'say' then
         -- sendAutomatically, so the slot casts rather than typing the words into
         -- the chat box and waiting for a return.
-        api.createOrUpdateText(ACTION_BAR, slot, entry.payload, true)
+        a.createOrUpdateText(ACTION_BAR, slot, entry.payload, true)
     elseif entry.kind == 'item' then
         -- useType is the action bar's own name for it, and it has to be the
         -- name: the consumer reads UseTypes[value] from a table with string keys
         -- only, so a number falls through to plain Use and fires the item at
         -- nothing. A rune or a machete used at nothing does nothing.
-        api.createOrUpdateAction(ACTION_BAR, slot, entry.useType, entry.itemId, 0)
+        a.createOrUpdateAction(ACTION_BAR, slot, entry.useType, entry.itemId, 0)
     else
         return false
     end
 
-    -- Marked after the write, not before: createOrUpdateText and
-    -- createOrUpdateAction both replace `actionsetting` wholesale but leave the
-    -- rest of the entry alone, and the mark sits beside it rather than inside it
-    -- so nothing upstream reads it as part of an action.
-    -- `mapping`, not `entry`. It used to be called `entry` and shadowed this
-    -- function's own argument, which is the kit entry off the wire and the only
-    -- thing here that carries a label. So the log line below read the action
-    -- bar's stored mapping instead and printed `nil` for every key of every
-    -- run, and it would have thrown outright on the day getMapping returned
-    -- nothing, two lines after the `if mapping then` that admits it can.
-    local mapping = api.getMapping(ACTION_BAR, slot)
-    if mapping then
-        mapping[MARK] = true
+    refresh(slot)
+    if a.saveData then
+        a.saveData()
     end
 
-    local button = buttonAt(slot)
-    if button then
-        update(button)
-    end
-    if api.saveData then
-        api.saveData()
-    end
-
-    g_logger.debug(string.format('arena kit slot %d: %s', slot, entry.label or entry.kind or '?'))
+    g_logger.info(string.format('arena kit slot %d: %s', slot, entry.label))
     return true
 end
 
@@ -253,13 +314,14 @@ local function split(buffer, limit)
 end
 
 -- Opcode 176. The arena kit for this run. The field count varies by verb, a
--- bind carrying four fields the clear does not, so this splits rather than
--- matching a fixed shape, the way opcode 173 is handled in arenahud.lua.
+-- bind carrying four fields the clear and the restore do not, so this splits
+-- rather than matching a fixed shape, the way opcode 173 is handled in
+-- arenahud.lua.
 --
--- The key field is still on the wire and is now ignored entirely. It once named
--- a binding, then it named a slot, and neither survived contact: the slots it
--- named were already full. The order entries arrive in is the order they go on
--- the bar, and which key fires them is the player's business.
+-- The key field is still on the wire and is ignored entirely. It once named a
+-- binding, then it named a slot, and neither survived contact. The order
+-- entries arrive in is the order they go on the bar, and which key fires them
+-- is the player's business.
 local function onArenaKeys(protocol, opcode, buffer)
     local parts = split(buffer, 6)
     if parts[1] ~= WIRE_VERSION then
@@ -267,23 +329,37 @@ local function onArenaKeys(protocol, opcode, buffer)
     end
 
     local verb = parts[2]
-    -- A clear hands the slots back. The kit items are gone from the inventory by
-    -- then, so leaving the entries would leave six greyed out buttons that do
-    -- nothing, and would also make the next run start its search past them.
-    -- Only slots the arena wrote are touched, so the player's own arrangement
-    -- comes back exactly as it was.
-    if verb ~= 'bind' then
-        taken = {}
-        pcall(sweepPreviousKit)
+
+    -- The bar is photographed once per session, not once per message. The
+    -- server sends a clear before every manifest and a champion pick sends a
+    -- second one, so overwriting the photograph here would save the wiped bar
+    -- and the player's own arrangement would be gone for good.
+    if verb == 'clear' then
+        if not hasSnapshot() then
+            pcall(takeSnapshot)
+        end
+        placed = 0
+        pcall(wipeBar)
         return
     end
 
-    -- First entry of a manifest, so this is a fresh run. Sweep again before
-    -- placing anything, because the clear above only runs if the client was
-    -- there to receive it: a crash or a quit mid run leaves the entries behind,
-    -- and this is where they get collected.
-    if next(taken) == nil then
-        pcall(sweepPreviousKit)
+    if verb == 'restore' then
+        placed = 0
+        pcall(restoreBar)
+        return
+    end
+
+    if verb ~= 'bind' then
+        return
+    end
+
+    -- A manifest whose clear never arrived, which is a dropped packet or a
+    -- server that predates the verb. Photograph and wipe here rather than
+    -- writing the kit over the top of whatever is on the bar, because that is
+    -- the one direction that loses the player's arrangement silently.
+    if placed == 0 and not hasSnapshot() then
+        pcall(takeSnapshot)
+        pcall(wipeBar)
     end
 
     local key, kind, payload = parts[3], parts[4], parts[5]
@@ -307,9 +383,10 @@ local function onArenaKeys(protocol, opcode, buffer)
         return
     end
 
+    placed = placed + 1
     -- Wrapped, because the action bar is upstream code reached across a module
     -- boundary and a change there must not be able to break a run.
-    pcall(placeOnBar, taken, entry)
+    pcall(place, placed, entry)
 end
 
 function init()
@@ -321,6 +398,15 @@ function init()
     if g_game.isOnline() then
         bind()
     end
+
+    -- A photograph still on disk at startup means the client went down inside a
+    -- run and nothing ever sent the restore. Deferred a second because module
+    -- load order is not guaranteed and game_actionbar has to be up first; the
+    -- cost of it failing anyway is nil, since the file stays and the next run's
+    -- clear will not overwrite it.
+    scheduleEvent(function()
+        pcall(restoreBar)
+    end, 1000)
 end
 
 function terminate()

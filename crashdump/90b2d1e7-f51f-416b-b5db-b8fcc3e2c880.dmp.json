@@ -1,0 +1,10 @@
+{
+    "EngineID": "0",
+    "HardwareID": "b695dd184961b95ee06754dfd8b1eafa58535fb0",
+    "LogMessages": "[{\"Message\":\"Using spritesheet cache size of 910\",\"Timestamp\":1790104010},{\"Message\":\"Sound engine initialized with default sound device \\\"S\\\\xC5\\\\x82uchawki (2- Arctis Nova Pro Wireless)\\\"\",\"Timestamp\":1790104010},{\"Message\":\"Switch used audio device to \\\"S\\\\xC5\\\\x82uchawki (2- Arctis Nova Pro Wireless)\\\"\",\"Timestamp\":1790104010},{\"Message\":\"\\\"Failed to load asset 'catalog-content.json': I/O error on file 'D:/appken/exp-arena/otclient/assets/catalog-content.json': File does not exist\\\"\",\"Timestamp\":1790104011},{\"Message\":\"Update failed. Please reinstall Tibia to update your client.\",\"Timestamp\":1790104011},{\"Message\":\"\\\"Failed to load asset 'catalog-sound.json': I/O error on file 'D:/appken/exp-arena/otclient/sounds/catalog-sound.json': File does not exist\\\"\",\"Timestamp\":1790104011},{\"Message\":\"Update failed. Please reinstall Tibia to update your client.\",\"Timestamp\":1790104011}]",
+    "LoginHost": "127.0.0.1",
+    "OperatingSystem": "Windows 11 Version 25H2",
+    "ProductName": "Tibia Client",
+    "Timestamp": "1790104014",
+    "Version": "15.25.0a00a0d67311e057aa8e659a84cdf51db9c08c03"
+}

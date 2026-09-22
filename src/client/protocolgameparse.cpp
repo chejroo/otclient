@@ -45,6 +45,8 @@
 #include <framework/util/stats.h>
 #ifdef FRAMEWORK_SOUND
 #include <framework/sound/soundmanager.h>
+#include <framework/core/clock.h>
+#include <unordered_map>
 #endif
 
 void ProtocolGame::parseMessage(const InputMessagePtr& msg)
@@ -1914,6 +1916,25 @@ void ProtocolGame::parseWorldLight(const InputMessagePtr& msg)
 static void playServerSoundEffect([[maybe_unused]] const uint16_t soundEffectId)
 {
 #ifdef FRAMEWORK_SOUND
+    // One area spell kills eight monsters in a single frame and the server sends
+    // eight identical sound packets for it. Started together they are the same
+    // sample eight times in phase, which is not eight sounds, it is one sound at
+    // eight times the amplitude, and it clips. So an id repeats at most once per
+    // window: the second copy carries no information the first did not, and the
+    // eighth is just distortion.
+    //
+    // Keyed by id rather than capped globally, because two different sounds
+    // landing together is a real event worth hearing, and a global cap would
+    // silence whichever arrived second for no reason.
+    static constexpr ticks_t SOUND_REPEAT_GAP_MS = 120;
+    static std::unordered_map<uint16_t, ticks_t> lastPlayedAt;
+
+    const ticks_t now = g_clock.millis();
+    auto& last = lastPlayedAt[soundEffectId];
+    if (last != 0 && now - last < SOUND_REPEAT_GAP_MS)
+        return;
+    last = now;
+
     const auto& file = g_sounds.getSoundEffectFileById(soundEffectId);
     if (!file.empty())
         g_sounds.play(file);

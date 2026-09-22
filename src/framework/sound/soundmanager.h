@@ -129,6 +129,14 @@ public:
 
     void setAudioEnabled(bool enable);
     bool isAudioEnabled() { return m_device && m_context && m_audioEnabled; }
+
+    // The client has no master volume without this. setAudioEnabled is on or off,
+    // the options panel's only slider drives SoundChannels::Music, and everything
+    // else reaches play() at gain 1.0 forever, including every sound the server
+    // sends. Applied inside play() so one multiply covers channels too, since
+    // SoundChannel::play routes through it.
+    void setMasterGain(float gain) { m_masterGain = gain > 0.f ? gain : 0.f; }
+    float getMasterGain() { return m_masterGain; }
     void enableAudio() { setAudioEnabled(true); }
     void disableAudio() { setAudioEnabled(false); }
     void stopAll();
@@ -170,6 +178,7 @@ private:
 
     std::vector<SoundSourcePtr> m_sources;
     bool m_audioEnabled{ true };
+    float m_masterGain{ 1.f };
 };
 
 extern SoundManager g_sounds;

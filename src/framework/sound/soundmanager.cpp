@@ -207,6 +207,15 @@ SoundSourcePtr SoundManager::play(const std::string& fn, const float fadetime, f
     if (pitch == 0)
         pitch = 1.0f;
 
+    // After the zero normalization above, never before it: a caller asking for
+    // gain 0 means "unset" here and is turned into 1.0, so scaling first would
+    // make silence the loudest thing in the mixer. Zero after scaling is a real
+    // request for silence, and the cheapest way to honour it is not to decode
+    // the file at all.
+    gain *= m_masterGain;
+    if (gain <= 0.0f)
+        return nullptr;
+
     const std::string& filename = resolveSoundFile(fn);
     const auto& soundSource = createSoundSource(filename);
     if (!soundSource) {
