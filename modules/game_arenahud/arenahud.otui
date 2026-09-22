@@ -155,28 +155,15 @@ PhantomMiniWindow
     text-align: center
     color: #8c8c8cff
 
-  // The player's own verb, so it sits above the separator that starts the
-  // gamemaster block and is not in DEV_ONLY. It opens a picker rather than
-  // sending a verb directly, because a challenge needs a name and the other
-  // buttons here do not.
-  //
-  // Declared before sep1 because sep1 anchors to its bottom, and an anchor to a
-  // widget the parser has not reached yet does not resolve.
-  ArenaButton
-    id: challengeButton
-    !text: 'Challenge a player'
-    anchors.left: parent.left
-    anchors.right: parent.right
-    anchors.top: link.bottom
-    margin-left: 6
-    margin-right: 6
-    margin-top: 5
-
+  // The Challenge button is NOT here. It lives in the main panel directly under
+  // Play, created in arenahud.lua's onGameStart, because that is where a player
+  // looks for the thing that starts a game. This panel is the run's telemetry
+  // and the gamemaster's tools.
   HorizontalSeparator
     id: sep1
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.top: challengeButton.bottom
+    anchors.top: link.bottom
     margin-left: 6
     margin-right: 6
     margin-top: 5

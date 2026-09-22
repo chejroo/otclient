@@ -269,6 +269,7 @@ local privileged = false
 -- this file: a local declared below its use is a different variable, silently.
 local resultHeld = false
 local arenaButton = nil
+local challengeMainButton = nil
 local bannerEvent = nil
 
 -- Live telegraph overlays, keyed by the server's telegraph id. Each entry holds
@@ -569,6 +570,15 @@ local function refresh()
         arenaButton:setText(label)
         arenaButton:setOn(running)
         arenaButton:setEnabled(phaseNow ~= 'countdown')
+    end
+
+    -- Only ever says one thing, but it is disabled outside TOWN: a challenge is
+    -- refused by the server in every other state anyway, and a button that is
+    -- drawn live and always refused is worse than one that is visibly not for
+    -- now.
+    if challengeMainButton then
+        challengeMainButton:setText(tr('Challenge'))
+        challengeMainButton:setEnabled(phaseNow == 'idle')
     end
 end
 
@@ -1695,11 +1705,7 @@ function arenaHudController:onInit()
                 end
             end
         end
-        -- Not in VERBS, because it does not send a verb: a challenge needs a
-        -- name, so the button opens the picker that collects one.
-        if ui.challengeButton then
-            ui.challengeButton.onClick = onChallengersOpen
-        end
+
     end
 
     setIdle()
@@ -1719,6 +1725,13 @@ function arenaHudController:onGameStart()
     -- panel was laid out. Ours is added on game start, after, so without this
     -- the panel keeps its old height and clips the button.
     if modules.game_mainpanel and modules.game_mainpanel.addStoreButton then
+        -- Challenge is created FIRST and Play second, which is what puts
+        -- Challenge directly underneath. `front` means insertChild(1), so the
+        -- last one created with it ends up on top: create Play first and it
+        -- would sit below Challenge instead. Green rather than blue so two
+        -- large buttons stacked are tellable apart at a glance.
+        challengeMainButton = modules.game_mainpanel.addStoreButton('arenaChallenge', tr('Challenge another player to a race'),
+            '/images/options/green_large', onChallengersOpen, true)
         arenaButton = modules.game_mainpanel.addStoreButton('arenaRun', tr('Start or stop an arena run'),
             '/images/options/blue_large', onArenaButton, true)
         -- Qualified, not the bare global. game_mainpanel is sandboxed, and a
@@ -1810,5 +1823,9 @@ function arenaHudController:onGameEnd()
     if arenaButton then
         arenaButton:destroy()
         arenaButton = nil
+    end
+    if challengeMainButton then
+        challengeMainButton:destroy()
+        challengeMainButton = nil
     end
 end
